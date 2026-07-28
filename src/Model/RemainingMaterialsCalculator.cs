@@ -56,6 +56,8 @@ namespace EMI
             public bool DurabilityAllocated;
             public bool LiquidAllocated;
             public float RemainingCondition;
+            public CraftingTreeNode PlannedBy;
+            public HashSet<ResourceKey> PlannedDependencies;
             public readonly List<LiquidPool> Liquids = new List<LiquidPool>();
         }
 
@@ -153,6 +155,7 @@ namespace EMI
             }
 
             List<Demand> level = CreateChildDemands(root, 1);
+            List<Demand> pendingLeaves = new List<Demand>();
 
             while (level.Count > 0)
             {
@@ -174,18 +177,22 @@ namespace EMI
                     {
                         result.RequiredRecipes.Add(producer);
                         int craftRuns = RequiredCraftRuns(demand, producer);
-                        if (demand.UsesDurability)
-                        {
-                            AddPlannedDurabilityOutputs(inventory, producer, craftRuns);
-                            AllocateInventory(new List<Demand> { demand }, inventory);
-                        }
+                        AddPlannedOutputs(
+                            inventory,
+                            producer,
+                            craftRuns,
+                            demand.UsesDurability,
+                            template);
+                        AllocateInventory(new List<Demand> { demand }, inventory);
+                        AllocateInventory(pendingLeaves, inventory);
 
-                        if (producer.items == null || producer.items.Count == 0)
+                        if (demand.IsSatisfied &&
+                            (producer.items == null || producer.items.Count == 0))
                         {
                             continue;
                         }
 
-                        if (template.Children.Count > 0)
+                        if (demand.IsSatisfied && template.Children.Count > 0)
                         {
                             List<Demand> children = CreateChildDemands(template, craftRuns);
                             nextLevel.AddRange(children);
@@ -193,11 +200,21 @@ namespace EMI
                         }
                     }
 
-                    AddLeaf(result.RemainingMaterials, materialIndices, demand);
-                    RegisterLeafProducers(result.LeafProducerRecipes, demand);
+                    pendingLeaves.Add(demand);
                 }
 
                 level = nextLevel;
+            }
+
+            foreach (Demand demand in pendingLeaves)
+            {
+                if (demand.IsSatisfied)
+                {
+                    continue;
+                }
+
+                AddLeaf(result.RemainingMaterials, materialIndices, demand);
+                RegisterLeafProducers(result.LeafProducerRecipes, demand);
             }
 
             return result;
@@ -309,7 +326,7 @@ namespace EMI
                 for (int i = 0; i < demands.Count; i++)
                 {
                     Demand demand = demands[i];
-                    if (demand.IsSatisfied)
+                    if (demand.IsSatisfied || !CanAllocate(entry, demand))
                     {
                         continue;
                     }
@@ -348,6 +365,35 @@ namespace EMI
                     }
                 }
             }
+        }
+
+        private static bool CanAllocate(InventoryEntry entry, Demand demand)
+        {
+            CraftingTreeNode source = entry?.PlannedBy;
+            if (source == null || ReferenceEquals(source, demand.Template))
+            {
+                return true;
+            }
+
+            // A planned output cannot bootstrap its own descendants or a mutual recipe cycle.
+            for (CraftingTreeNode ancestor = demand.Template?.Parent;
+                 ancestor != null;
+                 ancestor = ancestor.Parent)
+            {
+                if (ReferenceEquals(ancestor, source))
+                {
+                    return false;
+                }
+            }
+
+            CraftingTreeNode consumer = demand.Template?.Parent;
+            if (consumer?.Resource != null &&
+                entry.PlannedDependencies?.Contains(consumer.Resource.Value) == true)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private static void AllocateDurability(InventoryEntry entry, Demand demand)
@@ -560,13 +606,42 @@ namespace EMI
             entries.Add(entry);
         }
 
-        private static void AddPlannedDurabilityOutputs(
+        private static void AddPlannedOutputs(
             List<InventoryEntry> inventory,
             Recipe producer,
-            int craftRuns)
+            int craftRuns,
+            bool reserveForDurability,
+            CraftingTreeNode source)
         {
             if (producer?.result == null || craftRuns <= 0)
             {
+                return;
+            }
+
+            int outputPerCraft = Math.Max(1, producer.result.amount);
+            HashSet<ResourceKey> dependencies = new HashSet<ResourceKey>();
+            CollectDependencyResources(source, dependencies);
+            if (producer.result.isLiquid)
+            {
+                float outputAmount = producer.result.resultCondition * outputPerCraft * craftRuns;
+                if (outputAmount <= AmountEpsilon)
+                {
+                    return;
+                }
+
+                InventoryEntry liquidOutput = new InventoryEntry
+                {
+                    Id = producer.result.id,
+                    LiquidAllocated = true,
+                    PlannedBy = source,
+                    PlannedDependencies = dependencies
+                };
+                liquidOutput.Liquids.Add(new LiquidPool
+                {
+                    Id = producer.result.id,
+                    RemainingAmount = outputAmount
+                });
+                inventory.Add(liquidOutput);
                 return;
             }
 
@@ -577,7 +652,7 @@ namespace EMI
                 qualities = itemInfo?.qualities;
             }
 
-            long outputCount = (long)craftRuns * Math.Max(1, producer.result.amount);
+            long outputCount = (long)craftRuns * outputPerCraft;
             int safeOutputCount = (int)Math.Min(int.MaxValue, outputCount);
             for (int index = 0; index < safeOutputCount; index++)
             {
@@ -586,8 +661,30 @@ namespace EMI
                     Id = producer.result.id,
                     Qualities = qualities,
                     RemainingCondition = producer.result.resultCondition,
-                    DurabilityAllocated = true
+                    DurabilityAllocated = reserveForDurability,
+                    PlannedBy = source,
+                    PlannedDependencies = dependencies
                 });
+            }
+        }
+
+        private static void CollectDependencyResources(
+            CraftingTreeNode node,
+            HashSet<ResourceKey> resources)
+        {
+            if (node == null)
+            {
+                return;
+            }
+
+            if (node.Resource.HasValue)
+            {
+                resources.Add(node.Resource.Value);
+            }
+
+            foreach (CraftingTreeNode child in node.Children)
+            {
+                CollectDependencyResources(child, resources);
             }
         }
 
