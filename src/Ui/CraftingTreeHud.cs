@@ -41,6 +41,8 @@ namespace EMI
         private static readonly Color TerminalLeafColor =
             new Color(0.07f, 0.14f, 0.22f, 1f);
 
+        private const float UpdateNoticeInset = 52f;
+
         private readonly CraftingTreeModel _model = new CraftingTreeModel();
         private readonly List<GameObject> _treeRows = new List<GameObject>();
         private readonly List<GameObject> _popupRows = new List<GameObject>();
@@ -50,6 +52,9 @@ namespace EMI
         // Reused by the half-second inventory refresh to avoid per-refresh allocations.
         private readonly HashSet<int> _nextReadyTreeRecipes = new HashSet<int>();
         private readonly HashSet<int> _nextReadyLeafRecipes = new HashSet<int>();
+        // Structural paths preserve collapsed branches when model nodes are recreated.
+        private readonly HashSet<string> _collapsedNodePaths =
+            new HashSet<string>(StringComparer.Ordinal);
         private readonly Dictionary<Recipe, bool> _recipeAvailability =
             new Dictionary<Recipe, bool>();
 
@@ -57,11 +62,14 @@ namespace EMI
         private TMP_FontAsset _font;
         private RectTransform _treeOverlay;
         private RectTransform _treeContent;
+        private ScrollRect _treeScroll;
         private RectTransform _popup;
         private RectTransform _popupContent;
+        private RectTransform _updateNotice;
         private TextMeshProUGUI _title;
         private TextMeshProUGUI _emptyText;
         private TextMeshProUGUI _popupTitle;
+        private TextMeshProUGUI _updateNoticeText;
         private Image _normalTabImage;
         private Image _treeTabImage;
         private Image _compendiumTabImage;
@@ -115,6 +123,7 @@ namespace EMI
 
             CreateInterface();
             PreferenceStore.Changed += HandlePreferencesChanged;
+            UpdateChecker.Changed += HandleUpdateCheckerChanged;
             HandlePinnedRecipeChanged(player);
             SetPage(HudPage.Normal, false);
             EmiPlugin.Log?.LogInfo("[EMI] HUD attached.");
@@ -123,6 +132,7 @@ namespace EMI
         private void OnDestroy()
         {
             PreferenceStore.Changed -= HandlePreferencesChanged;
+            UpdateChecker.Changed -= HandleUpdateCheckerChanged;
             if (Active == this)
             {
                 Active = null;
@@ -138,6 +148,7 @@ namespace EMI
         {
             ResourceIconProvider.Clear();
             _model.Clear();
+            _collapsedNodePaths.Clear();
             _compendium?.HandleCatalogRebuilt();
             HandlePinnedRecipeChanged(_player);
         }
@@ -150,8 +161,10 @@ namespace EMI
             }
 
             int? pinned = player.pinnedRecipe;
+            bool rootChanged = false;
             if (!pinned.HasValue || pinned.Value < 0 || pinned.Value >= Recipes.recipes.Count)
             {
+                rootChanged = _model.Root != null;
                 _model.Clear();
             }
             else
@@ -160,12 +173,18 @@ namespace EMI
                 if (_model.RootRecipe != pinnedRecipe)
                 {
                     _model.SetRoot(pinnedRecipe);
+                    rootChanged = true;
                 }
+            }
+
+            if (rootChanged)
+            {
+                _collapsedNodePaths.Clear();
             }
 
             if (_page == HudPage.Tree)
             {
-                RenderTree();
+                RenderTree(!rootChanged);
             }
 
             RefreshRemainingMaterials();
@@ -261,6 +280,7 @@ namespace EMI
             CreateTreeOverlay();
             CreatePopup();
             _compendium = CompendiumPanel.Create(transform, _font, _player);
+            CreateUpdateNotice();
         }
 
         private void CreateTabs()
@@ -364,8 +384,8 @@ namespace EMI
                 EmiText.Reset,
                 EmiText.ResetDescription);
 
-            ScrollRect scroll = UiFactory.CreateScrollView("TreeScroll", _treeOverlay, out _treeContent);
-            RectTransform scrollRect = scroll.GetComponent<RectTransform>();
+            _treeScroll = UiFactory.CreateScrollView("TreeScroll", _treeOverlay, out _treeContent);
+            RectTransform scrollRect = _treeScroll.GetComponent<RectTransform>();
             scrollRect.anchorMin = Vector2.zero;
             scrollRect.anchorMax = Vector2.one;
             scrollRect.offsetMin = new Vector2(6f, 6f);
@@ -379,6 +399,71 @@ namespace EMI
                 TextAlignmentOptions.Center);
             UiFactory.Stretch(_emptyText.rectTransform, 24f, 24f, 80f, 80f);
             _emptyText.text = EmiText.NoPinnedRecipe;
+        }
+
+        private void CreateUpdateNotice()
+        {
+            Image notice = UiFactory.CreatePanel(
+                "UpdateNotice",
+                transform,
+                UiFactory.RaisedBlack,
+                true);
+            UiFactory.BlockTooltipsBehind(notice.gameObject);
+            _updateNotice = notice.rectTransform;
+            _updateNotice.anchorMin = new Vector2(0.505f, 0.018f);
+            _updateNotice.anchorMax = new Vector2(0.992f, 0.018f);
+            _updateNotice.pivot = new Vector2(0.5f, 0f);
+            _updateNotice.anchoredPosition = Vector2.zero;
+            _updateNotice.sizeDelta = new Vector2(0f, 46f);
+
+            _updateNoticeText = UiFactory.CreateText(
+                "Message",
+                _updateNotice,
+                _font,
+                18f,
+                TextAlignmentOptions.Left);
+            UiFactory.Stretch(_updateNoticeText.rectTransform, 12f, 150f, 4f, 4f);
+            _updateNoticeText.color = UiFactory.Yellow;
+
+            Button open = UiFactory.CreateButton(
+                "OpenRelease",
+                _updateNotice,
+                _font,
+                EmiText.OpenRelease,
+                OpenLatestRelease,
+                out _,
+                out _);
+            UiFactory.Anchor(
+                open.GetComponent<RectTransform>(),
+                new Vector2(1f, 0.5f),
+                new Vector2(1f, 0.5f),
+                new Vector2(-77f, 0f),
+                new Vector2(64f, 34f));
+            UiFactory.AddTooltip(
+                open.gameObject,
+                EmiText.OpenRelease,
+                EmiText.OpenReleaseDescription);
+
+            Button hide = UiFactory.CreateButton(
+                "HideUpdate",
+                _updateNotice,
+                _font,
+                EmiText.HideUpdate,
+                HideUpdateNotice,
+                out _,
+                out _);
+            UiFactory.Anchor(
+                hide.GetComponent<RectTransform>(),
+                new Vector2(1f, 0.5f),
+                new Vector2(1f, 0.5f),
+                new Vector2(-7f, 0f),
+                new Vector2(64f, 34f));
+            UiFactory.AddTooltip(
+                hide.gameObject,
+                EmiText.HideUpdate,
+                EmiText.HideUpdateDescription);
+
+            _updateNotice.gameObject.SetActive(false);
         }
 
         private void CreatePopup()
@@ -440,6 +525,7 @@ namespace EMI
             bool compendiumActive = page == HudPage.Compendium;
             _treeOverlay.gameObject.SetActive(treeActive);
             _compendium?.SetVisible(compendiumActive);
+            UpdateUpdateNoticeVisibility();
             if (!treeActive)
             {
                 ClosePopup();
@@ -472,6 +558,42 @@ namespace EMI
             {
                 _player.PlayUISound(PlayerCamera.UISoundType.MiniClick, 1f);
             }
+        }
+
+        private void HandleUpdateCheckerChanged()
+        {
+            UpdateUpdateNoticeVisibility();
+        }
+
+        private void UpdateUpdateNoticeVisibility()
+        {
+            if (_updateNotice == null)
+            {
+                return;
+            }
+
+            bool visible = _page != HudPage.Normal && UpdateChecker.ShouldShowNotice;
+            float bottomInset = visible ? UpdateNoticeInset : 0f;
+            _treeOverlay.offsetMin = new Vector2(0f, bottomInset);
+            _compendium?.SetBottomInset(bottomInset);
+            _updateNotice.gameObject.SetActive(visible);
+            if (visible)
+            {
+                _updateNoticeText.text = EmiText.FormatUpdateAvailable(UpdateChecker.LatestTag);
+                _updateNotice.SetAsLastSibling();
+            }
+        }
+
+        private void OpenLatestRelease()
+        {
+            _player?.PlayUISound(PlayerCamera.UISoundType.MiniClick, 1f);
+            Application.OpenURL(UpdateChecker.LatestReleaseUrl);
+        }
+
+        private void HideUpdateNotice()
+        {
+            _player?.PlayUISound(PlayerCamera.UISoundType.MiniClick, 1f);
+            UpdateChecker.HideForSession();
         }
 
         private void HandlePreferencesChanged()
@@ -524,13 +646,17 @@ namespace EMI
         private void ResetTree()
         {
             _model.ResetSelections();
+            _collapsedNodePaths.Clear();
             ClosePopup();
-            RenderTree();
+            RenderTree(false);
             _player.PlayUISound(PlayerCamera.UISoundType.MiniClick, 1f);
         }
 
-        private void RenderTree()
+        private void RenderTree(bool preserveScroll = true)
         {
+            float scrollOffset = preserveScroll && _treeContent != null
+                ? _treeContent.anchoredPosition.y
+                : 0f;
             ClearObjects(_treeRows);
             ClosePopup();
 
@@ -542,11 +668,28 @@ namespace EMI
             if (hasRoot)
             {
                 _model.EvaluateBoundaries();
-                RenderNode(root);
+                RenderNode(root, "root");
             }
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(_treeContent);
+            RestoreTreeScrollOffset(scrollOffset);
             RefreshRemainingMaterials();
+        }
+
+        private void RestoreTreeScrollOffset(float scrollOffset)
+        {
+            if (_treeScroll == null || _treeContent == null || _treeScroll.viewport == null)
+            {
+                return;
+            }
+
+            _treeScroll.StopMovement();
+            float maximumOffset = Mathf.Max(
+                0f,
+                _treeContent.rect.height - _treeScroll.viewport.rect.height);
+            Vector2 position = _treeContent.anchoredPosition;
+            position.y = Mathf.Clamp(scrollOffset, 0f, maximumOffset);
+            _treeContent.anchoredPosition = position;
         }
 
         private void RefreshRemainingMaterials()
@@ -816,23 +959,30 @@ namespace EMI
             return name;
         }
 
-        private void RenderNode(CraftingTreeNode node)
+        private void RenderNode(CraftingTreeNode node, string nodePath)
         {
-            GameObject row = CreateTreeRow(node);
+            bool canCollapse = node.CanShowChildren && node.Children.Count > 0;
+            bool isCollapsed = canCollapse && _collapsedNodePaths.Contains(nodePath);
+            GameObject row = CreateTreeRow(node, nodePath, canCollapse, isCollapsed);
             _treeRows.Add(row);
 
-            if (!node.CanShowChildren)
+            if (!canCollapse || isCollapsed)
             {
                 return;
             }
 
-            foreach (CraftingTreeNode child in node.Children)
+            for (int index = 0; index < node.Children.Count; index++)
             {
-                RenderNode(child);
+                CraftingTreeNode child = node.Children[index];
+                RenderNode(child, BuildChildNodePath(nodePath, child, index));
             }
         }
 
-        private GameObject CreateTreeRow(CraftingTreeNode node)
+        private GameObject CreateTreeRow(
+            CraftingTreeNode node,
+            string nodePath,
+            bool canCollapse,
+            bool isCollapsed)
         {
             Image background = UiFactory.CreatePanel(
                 "Node_" + node.Depth.ToString(CultureInfo.InvariantCulture),
@@ -874,10 +1024,12 @@ namespace EMI
             label.rectTransform.anchorMin = Vector2.zero;
             label.rectTransform.anchorMax = Vector2.one;
             label.rectTransform.offsetMin = new Vector2(indent + 50f, 3f);
-            label.rectTransform.offsetMax = new Vector2(-58f, -3f);
+            bool canChoose = CanChoose(node);
+            int buttonCount = (canChoose ? 1 : 0) + (canCollapse ? 1 : 0);
+            label.rectTransform.offsetMax = new Vector2(-(10f + buttonCount * 48f), -3f);
             label.text = GetNodeName(node) + "\n<size=13><color=#8D948F>" + GetNodeDetail(node) + "</color></size>";
 
-            if (CanChoose(node))
+            if (canChoose)
             {
                 Button choose = UiFactory.CreateButton(
                     "Choose",
@@ -917,7 +1069,71 @@ namespace EMI
                     tooltipDescription);
             }
 
+            if (canCollapse)
+            {
+                Button collapse = UiFactory.CreateButton(
+                    isCollapsed ? "Expand" : "Collapse",
+                    background.transform,
+                    _font,
+                    isCollapsed ? "+" : "-",
+                    () => ToggleNodeCollapsed(nodePath),
+                    out _,
+                    out _);
+                UiFactory.Anchor(
+                    collapse.GetComponent<RectTransform>(),
+                    new Vector2(1f, 0.5f),
+                    new Vector2(1f, 0.5f),
+                    new Vector2(canChoose ? -55f : -7f, 0f),
+                    new Vector2(42f, 36f));
+                UiFactory.AddTooltip(
+                    collapse.gameObject,
+                    isCollapsed ? EmiText.Expand : EmiText.Collapse,
+                    isCollapsed ? EmiText.ExpandDescription : EmiText.CollapseDescription);
+            }
+
             return background.gameObject;
+        }
+
+        private void ToggleNodeCollapsed(string nodePath)
+        {
+            if (!_collapsedNodePaths.Remove(nodePath))
+            {
+                _collapsedNodePaths.Add(nodePath);
+            }
+
+            RenderTree();
+            _player.PlayUISound(PlayerCamera.UISoundType.MiniClick, 1f);
+        }
+
+        private static string BuildChildNodePath(
+            string parentPath,
+            CraftingTreeNode child,
+            int childIndex)
+        {
+            RecipeItem requirement = child.Requirement;
+            string identity;
+            if (requirement == null)
+            {
+                identity = "none";
+            }
+            else if (requirement.specific)
+            {
+                identity = "specific:" + (requirement.specificId ?? string.Empty);
+            }
+            else
+            {
+                identity = "quality:" + (requirement.quality?.id ?? string.Empty) + ":" +
+                           (requirement.quality?.amount ?? 0f).ToString(
+                               "R",
+                               CultureInfo.InvariantCulture);
+            }
+
+            return parentPath + "/" + childIndex.ToString(CultureInfo.InvariantCulture) + ":" +
+                   identity + ":" + requirement?.isLiquid + ":" +
+                   requirement?.destroyItem + ":" +
+                   (requirement?.minimumCondition ?? 0f).ToString(
+                       "R",
+                       CultureInfo.InvariantCulture);
         }
 
         private Color GetTreeRowColor(CraftingTreeNode node)

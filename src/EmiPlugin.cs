@@ -11,7 +11,7 @@ namespace EMI
     {
         public const string PluginGuid = "exmeow.casualtiesunknown.emi";
         public const string PluginName = "EMI";
-        public const string PluginVersion = "1.0.2";
+        public const string PluginVersion = "1.0.3";
 
         internal static ManualLogSource Log { get; private set; }
 
@@ -32,6 +32,7 @@ namespace EMI
             {
                 _harmony = new Harmony(PluginGuid);
                 _harmony.PatchAll(GetType().Assembly);
+                StartCoroutine(UpdateChecker.CheckForUpdates());
                 Logger.LogInfo($"[EMI] {PluginName} initialized.");
             }
             catch (Exception exception)

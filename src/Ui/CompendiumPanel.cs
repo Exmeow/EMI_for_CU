@@ -69,6 +69,16 @@ namespace EMI
 
         public bool IsVisible => _root != null && _root.gameObject.activeSelf;
 
+        public void SetBottomInset(float bottomInset)
+        {
+            if (_root == null)
+            {
+                return;
+            }
+
+            _root.offsetMin = new Vector2(0f, Mathf.Max(0f, bottomInset));
+        }
+
         public void SetVisible(bool visible)
         {
             if (_root == null)

@@ -60,6 +60,10 @@ namespace EMI
         public static string ChangeMaterial => IsChinese ? "更换材料" : "CHANGE MATERIAL";
         public static string UseQualityRequirement => IsChinese ? "按性质计算" : "USE QUALITY REQUIREMENT";
         public static string StopHere => IsChinese ? "停止展开" : "STOP HERE";
+        public static string Collapse => IsChinese ? "收起" : "COLLAPSE";
+        public static string Expand => IsChinese ? "展开" : "EXPAND";
+        public static string OpenRelease => IsChinese ? "跳转" : "OPEN";
+        public static string HideUpdate => IsChinese ? "隐藏" : "HIDE";
         public static string ConsumesDurability => IsChinese ? "消耗耐久" : "USES DURABILITY";
         public static string MadeUsingSelectedRecipe => IsChinese
             ? "由所选配方制作"
@@ -117,6 +121,25 @@ namespace EMI
         public static string StopHereDescription => IsChinese
             ? "将此材料保留为叶节点，不再展开生产配方"
             : "Keep this material as a leaf and stop expanding its recipe";
+        public static string CollapseDescription => IsChinese
+            ? "隐藏此节点的下游；规划计算不受影响"
+            : "Hide this node's descendants without changing the plan";
+        public static string ExpandDescription => IsChinese
+            ? "显示此节点的下游"
+            : "Show this node's descendants";
+        public static string OpenReleaseDescription => IsChinese
+            ? "在浏览器中打开最新发布页面"
+            : "Open the latest release page in a browser";
+        public static string HideUpdateDescription => IsChinese
+            ? "本次游戏不再显示此更新提示"
+            : "Hide this update notice until the game restarts";
+
+        public static string FormatUpdateAvailable(string version)
+        {
+            return IsChinese
+                ? "！检测到新版本：" + version
+                : "! New version available: " + version;
+        }
 
         public static string FormatRequiredUses(int uses)
         {
