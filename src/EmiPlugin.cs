@@ -12,7 +12,7 @@ namespace EMI
     {
         public const string PluginGuid = "exmeow.casualtiesunknown.emi";
         public const string PluginName = "EMI";
-        public const string PluginVersion = "0.2.0";
+        public const string PluginVersion = "0.5.1";
 
         internal static ManualLogSource Log { get; private set; }
 
@@ -35,9 +35,13 @@ namespace EMI
                 var playerStart = AccessTools.Method(typeof(PlayerCamera), "Start");
                 var recipesSetup = AccessTools.Method(typeof(Recipes), nameof(Recipes.SetUpRecipes));
                 var pinRecipe = AccessTools.Method(typeof(PlayerCamera), nameof(PlayerCamera.PinRecipe));
+                var playerLateUpdate = AccessTools.Method(typeof(PlayerCamera), "LateUpdate");
+                var refreshRecipeList = AccessTools.Method(typeof(PlayerCamera), nameof(PlayerCamera.RefreshRecipeList));
                 Logger.LogInfo(
                     $"[EMI] Patch targets: PlayerCamera.Start={playerStart != null}, " +
-                    $"Recipes.SetUpRecipes={recipesSetup != null}, PlayerCamera.PinRecipe={pinRecipe != null}");
+                    $"Recipes.SetUpRecipes={recipesSetup != null}, PlayerCamera.PinRecipe={pinRecipe != null}, " +
+                    $"PlayerCamera.LateUpdate={playerLateUpdate != null}, " +
+                    $"PlayerCamera.RefreshRecipeList={refreshRecipeList != null}");
 
                 _harmony = new Harmony(PluginGuid);
                 _harmony.PatchAll(GetType().Assembly);
@@ -45,6 +49,8 @@ namespace EMI
                 LogPatchState("PlayerCamera.Start", playerStart);
                 LogPatchState("Recipes.SetUpRecipes", recipesSetup);
                 LogPatchState("PlayerCamera.PinRecipe", pinRecipe);
+                LogPatchState("PlayerCamera.LateUpdate", playerLateUpdate);
+                LogPatchState("PlayerCamera.RefreshRecipeList", refreshRecipeList);
                 Logger.LogInfo("[EMI] Initialization and Harmony patching completed.");
             }
             catch (Exception exception)

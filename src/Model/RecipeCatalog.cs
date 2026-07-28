@@ -24,7 +24,8 @@ namespace EMI
 
             foreach (Recipe recipe in Recipes.recipes)
             {
-                if (recipe == null || recipe.result == null || string.IsNullOrEmpty(recipe.result.id))
+                if (recipe == null || recipe.isRepair || recipe.result == null ||
+                    string.IsNullOrEmpty(recipe.result.id))
                 {
                     continue;
                 }
@@ -63,6 +64,44 @@ namespace EMI
                 : Array.Empty<Recipe>();
         }
 
+        public static List<Recipe> GetCompatibleProducers(ResourceKey resource, RecipeItem requirement)
+        {
+            IReadOnlyList<Recipe> producers = GetProducers(resource);
+            List<Recipe> compatible = new List<Recipe>();
+            foreach (Recipe producer in producers)
+            {
+                if (IsProducerCompatible(producer, requirement))
+                {
+                    compatible.Add(producer);
+                }
+            }
+
+            return compatible;
+        }
+
+        public static bool IsProducerCompatible(Recipe producer, RecipeItem requirement)
+        {
+            if (producer?.result == null)
+            {
+                return false;
+            }
+
+            if (requirement == null || requirement.isLiquid)
+            {
+                return true;
+            }
+
+            if (DurabilityRequirement.AppliesTo(requirement))
+            {
+                return DurabilityRequirement.GetUsesPerCraft(
+                    producer.result,
+                    requirement,
+                    1) > 0;
+            }
+
+            return producer.result.resultCondition >= requirement.minimumCondition;
+        }
+
         public static List<ResourceCandidate> GetCandidates(RecipeItem requirement)
         {
             if (requirement == null || requirement.specific || requirement.quality == null)
@@ -75,6 +114,67 @@ namespace EMI
                 : GetItemCandidates(requirement);
         }
 
+        public static List<Recipe> GetQualityProducers(RecipeItem requirement)
+        {
+            List<Recipe> matches = new List<Recipe>();
+            if (requirement == null || requirement.specific || requirement.quality == null)
+            {
+                return matches;
+            }
+
+            foreach (KeyValuePair<ResourceKey, List<Recipe>> entry in Producers)
+            {
+                if (entry.Key.IsLiquid != requirement.isLiquid ||
+                    !IsCandidateCompatible(new ResourceCandidate(entry.Key), requirement))
+                {
+                    continue;
+                }
+
+                foreach (Recipe producer in entry.Value)
+                {
+                    if (IsProducerCompatible(producer, requirement))
+                    {
+                        matches.Add(producer);
+                    }
+                }
+            }
+
+            return matches;
+        }
+
+        public static bool IsCandidateCompatible(
+            ResourceCandidate candidate,
+            RecipeItem requirement)
+        {
+            if (candidate == null || requirement == null || requirement.specific ||
+                requirement.quality == null || candidate.Resource.IsLiquid != requirement.isLiquid)
+            {
+                return false;
+            }
+
+            if (requirement.isLiquid)
+            {
+                return Liquids.Registry != null &&
+                       Liquids.Registry.TryGetValue(candidate.Resource.Id, out LiquidType liquid) &&
+                       liquid?.qualities != null &&
+                       liquid.qualities.Any(quality =>
+                           quality.id == requirement.quality.id && quality.amount > 0f);
+            }
+
+            if (!string.IsNullOrEmpty(requirement.ignoredId) &&
+                candidate.Resource.Id == requirement.ignoredId)
+            {
+                return false;
+            }
+
+            return Item.GlobalItems != null &&
+                   Item.GlobalItems.TryGetValue(candidate.Resource.Id, out ItemInfo item) &&
+                   item?.qualities != null &&
+                   item.qualities.Any(quality =>
+                       quality.id == requirement.quality.id &&
+                       quality.amount >= requirement.quality.amount);
+        }
+
         private static List<ResourceCandidate> GetItemCandidates(RecipeItem requirement)
         {
             List<ResourceCandidate> candidates = new List<ResourceCandidate>();
@@ -85,6 +185,11 @@ namespace EMI
 
             foreach (KeyValuePair<string, ItemInfo> entry in Item.GlobalItems)
             {
+                if (!string.IsNullOrEmpty(requirement.ignoredId) && entry.Key == requirement.ignoredId)
+                {
+                    continue;
+                }
+
                 List<CraftingQuality> qualities = entry.Value?.qualities;
                 if (qualities == null)
                 {
@@ -101,7 +206,7 @@ namespace EMI
                 }
             }
 
-            candidates.Sort(CompareCandidates);
+            candidates.Sort((left, right) => CompareCandidates(left, right, requirement));
             return candidates;
         }
 
@@ -127,14 +232,17 @@ namespace EMI
                 candidates.Add(new ResourceCandidate(new ResourceKey(entry.Key, true), requiredAmount));
             }
 
-            candidates.Sort(CompareCandidates);
+            candidates.Sort((left, right) => CompareCandidates(left, right, requirement));
             return candidates;
         }
 
-        private static int CompareCandidates(ResourceCandidate left, ResourceCandidate right)
+        private static int CompareCandidates(
+            ResourceCandidate left,
+            ResourceCandidate right,
+            RecipeItem requirement)
         {
-            bool leftCraftable = GetProducers(left.Resource).Count > 0;
-            bool rightCraftable = GetProducers(right.Resource).Count > 0;
+            bool leftCraftable = GetCompatibleProducers(left.Resource, requirement).Count > 0;
+            bool rightCraftable = GetCompatibleProducers(right.Resource, requirement).Count > 0;
             int craftable = rightCraftable.CompareTo(leftCraftable);
             return craftable != 0
                 ? craftable

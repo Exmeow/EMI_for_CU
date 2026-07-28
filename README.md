@@ -20,9 +20,26 @@ location.
 - Adds normal-recipe and crafting-tree tabs to the crafting panel.
 - Uses the pinned recipe as the tree root.
 - Applies each producer selection to every occurrence of the same product.
+- Applies each quality-material selection to every matching visible quality
+  requirement, while respecting the candidate exclusions of every node.
 - Collapses repeated ingredients into counters and propagates required craft
   counts through downstream recipes.
-- Supports concrete ingredients, quality alternatives, repair-cycle
-  boundaries, and reusable-tool deduplication.
-- Hides the original `pinRecipeText` rendering.
-- Does not calculate inventory coverage or remaining leaf requirements yet.
+- Supports concrete ingredients, quality alternatives, and repair-cycle
+  boundaries.
+- Uses the original pinned-recipe text area to show remaining leaf materials.
+- Merges matching remaining quality requirements across different parent
+  recipes, even when their internal excluded-item IDs differ.
+- Covers shallower tree nodes from inventory first, recalculates partially
+  covered downstream craft counts, and strictly allocates liquid volumes.
+- Accounts for durability consumed by every non-destroyed item requirement.
+  Existing and planned items contribute uses according to their condition and
+  actual quality value; no tool is treated as permanently reusable.
+- Keeps the crafting-tree rows independent from inventory refreshes.
+- Highlights and prioritizes currently executable selected tree recipes, then
+  executable recipes that can produce an unfilled concrete or quality leaf.
+- Uses a full-row translucent highlight plus a 7-pixel accent bar so recipe
+  priorities remain visible despite the original button color tint.
+- Highlights expandable tree leaves in light blue and terminal leaves in dark
+  blue, while leaving expanded nodes in their normal row colors.
+- Formats abstract quality items and liquids in natural language, and gives
+  EMI buttons native hover tooltips with descriptive secondary text.

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -15,12 +16,38 @@ namespace EMI
             public Color Color;
         }
 
+        private sealed class RecipeRowBinding
+        {
+            public Recipe Recipe;
+            public RectTransform RectTransform;
+            public Image Background;
+            public Image Overlay;
+            public Image Accent;
+            public Color OriginalBackground;
+            public int OriginalOrder;
+        }
+
+        private static readonly Color ReadyTreeRecipeColor =
+            new Color(0.34f, 0.78f, 0.46f, 1f);
+
+        private static readonly Color ReadyLeafRecipeColor =
+            new Color(0.36f, 0.68f, 0.88f, 1f);
+
+        private static readonly Color ExpandableLeafColor =
+            new Color(0.16f, 0.32f, 0.42f, 1f);
+
+        private static readonly Color TerminalLeafColor =
+            new Color(0.07f, 0.14f, 0.22f, 1f);
+
         private static readonly Dictionary<ResourceKey, IconVisual> IconCache =
             new Dictionary<ResourceKey, IconVisual>();
 
         private readonly CraftingTreeModel _model = new CraftingTreeModel();
         private readonly List<GameObject> _treeRows = new List<GameObject>();
         private readonly List<GameObject> _popupRows = new List<GameObject>();
+        private readonly List<RecipeRowBinding> _recipeRows = new List<RecipeRowBinding>();
+        private readonly HashSet<int> _readyTreeRecipes = new HashSet<int>();
+        private readonly HashSet<int> _readyLeafRecipes = new HashSet<int>();
 
         private PlayerCamera _player;
         private TMP_FontAsset _font;
@@ -37,6 +64,9 @@ namespace EMI
         private TextMeshProUGUI _treeTabText;
         private bool _treeViewActive;
         private bool _initialized;
+        private float _nextRemainingRefreshTime;
+        private string _remainingText = string.Empty;
+        private bool _remainingCalculationFailed;
 
         public static CraftingTreeHud Active { get; private set; }
 
@@ -92,8 +122,8 @@ namespace EMI
 
             if (player.pinRecipeText != null)
             {
-                player.pinRecipeText.enabled = false;
-                EmiPlugin.Log?.LogInfo("[EMI] Original pinRecipeText renderer disabled.");
+                player.pinRecipeText.enabled = true;
+                EmiPlugin.Log?.LogInfo("[EMI] Original pinRecipeText renderer reserved for remaining materials.");
             }
 
             EmiPlugin.Log?.LogInfo("[EMI] Creating HUD interface objects.");
@@ -169,6 +199,92 @@ namespace EMI
             {
                 RenderTree();
             }
+
+            RefreshRemainingMaterials();
+        }
+
+        public void HandlePlayerLateUpdate(PlayerCamera player)
+        {
+            if (player == null || player != _player || player.pinRecipeText == null)
+            {
+                return;
+            }
+
+            if (Time.unscaledTime >= _nextRemainingRefreshTime)
+            {
+                RefreshRemainingMaterials();
+            }
+
+            player.pinRecipeText.enabled = true;
+            player.pinRecipeText.text = _remainingText;
+        }
+
+        public void HandleRecipeListRefreshed(
+            PlayerCamera player,
+            IReadOnlyList<Recipe> recipes,
+            IReadOnlyList<GameObject> rows)
+        {
+            if (player == null || player != _player || recipes == null || rows == null)
+            {
+                return;
+            }
+
+            _recipeRows.Clear();
+            int count = Math.Min(recipes.Count, rows.Count);
+            if (recipes.Count != rows.Count)
+            {
+                EmiPlugin.Log?.LogWarning(
+                    $"[EMI] Recipe row binding count mismatch. Recipes={recipes.Count}, Rows={rows.Count}");
+            }
+
+            for (int index = 0; index < count; index++)
+            {
+                GameObject row = rows[index];
+                if (row == null)
+                {
+                    continue;
+                }
+
+                Image background = row.GetComponent<Image>();
+                RectTransform rectTransform = row.GetComponent<RectTransform>();
+                if (background == null || rectTransform == null)
+                {
+                    continue;
+                }
+
+                Image accent = UiFactory.CreatePanel(
+                    "EMIReadyAccent",
+                    row.transform,
+                    Color.clear);
+                accent.raycastTarget = false;
+                UiFactory.Anchor(
+                    accent.rectTransform,
+                    new Vector2(0f, 0.5f),
+                    new Vector2(0f, 0.5f),
+                    new Vector2(4f, 0f),
+                    new Vector2(7f, 54f));
+
+                Image overlay = UiFactory.CreatePanel(
+                    "EMIReadyOverlay",
+                    row.transform,
+                    Color.clear);
+                overlay.raycastTarget = false;
+                UiFactory.Stretch(overlay.rectTransform);
+                overlay.transform.SetAsFirstSibling();
+
+                _recipeRows.Add(new RecipeRowBinding
+                {
+                    Recipe = recipes[index],
+                    RectTransform = rectTransform,
+                    Background = background,
+                    Overlay = overlay,
+                    Accent = accent,
+                    OriginalBackground = background.color,
+                    OriginalOrder = index
+                });
+            }
+
+            ApplyRecipeListHighlights();
         }
 
         private void CreateInterface()
@@ -194,7 +310,10 @@ namespace EMI
                 new Vector2(0f, 1f),
                 new Vector2(8f, -18f),
                 new Vector2(112f, 40f));
-            UiFactory.AddTooltip(normal.gameObject, EmiText.NormalTab, EmiText.NormalTab);
+            UiFactory.AddTooltip(
+                normal.gameObject,
+                EmiText.NormalTab,
+                EmiText.NormalTabDescription);
 
             Button tree = UiFactory.CreateButton(
                 "TreeTab",
@@ -210,7 +329,10 @@ namespace EMI
                 new Vector2(0f, 1f),
                 new Vector2(8f, -64f),
                 new Vector2(112f, 40f));
-            UiFactory.AddTooltip(tree.gameObject, EmiText.TreeTab, "EMI");
+            UiFactory.AddTooltip(
+                tree.gameObject,
+                EmiText.TreeTab,
+                EmiText.TreeTabDescription);
         }
 
         private void CreateTreeOverlay()
@@ -248,6 +370,10 @@ namespace EMI
                 new Vector2(1f, 0.5f),
                 new Vector2(-8f, 0f),
                 new Vector2(78f, 34f));
+            UiFactory.AddTooltip(
+                reset.gameObject,
+                EmiText.Reset,
+                EmiText.ResetDescription);
 
             ScrollRect scroll = UiFactory.CreateScrollView("TreeScroll", _treeOverlay, out _treeContent);
             RectTransform scrollRect = scroll.GetComponent<RectTransform>();
@@ -302,7 +428,10 @@ namespace EMI
                 new Vector2(1f, 0.5f),
                 new Vector2(-7f, 0f),
                 new Vector2(36f, 34f));
-            UiFactory.AddTooltip(close.gameObject, EmiText.Close, string.Empty);
+            UiFactory.AddTooltip(
+                close.gameObject,
+                EmiText.Close,
+                EmiText.CloseDescription);
 
             ScrollRect scroll = UiFactory.CreateScrollView("Options", _popup, out _popupContent);
             RectTransform scrollRect = scroll.GetComponent<RectTransform>();
@@ -371,6 +500,240 @@ namespace EMI
             }
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(_treeContent);
+            RefreshRemainingMaterials();
+        }
+
+        private void RefreshRemainingMaterials()
+        {
+            _nextRemainingRefreshTime = Time.unscaledTime + 0.5f;
+            if (_player == null || _player.pinRecipeText == null)
+            {
+                return;
+            }
+
+            CraftingTreeNode root = _model.Root;
+            if (root == null || _player.body == null)
+            {
+                _remainingText = string.Empty;
+                ClearReadyRecipes();
+                _player.pinRecipeText.text = _remainingText;
+                return;
+            }
+
+            try
+            {
+                _model.EvaluateBoundaries();
+                CraftingPlanResult plan = RemainingMaterialsCalculator.Calculate(root, _player.body);
+                _remainingText = BuildRemainingText(root, plan.RemainingMaterials);
+                UpdateReadyRecipes(plan);
+                _remainingCalculationFailed = false;
+            }
+            catch (Exception exception)
+            {
+                if (!_remainingCalculationFailed)
+                {
+                    EmiPlugin.Log?.LogError($"[EMI] Remaining materials calculation failed:\n{exception}");
+                    _remainingCalculationFailed = true;
+                }
+
+                _remainingText = root.SelectedRecipe.fullName + ":";
+                ClearReadyRecipes();
+            }
+
+            _player.pinRecipeText.enabled = true;
+            _player.pinRecipeText.text = _remainingText;
+        }
+
+        private void UpdateReadyRecipes(CraftingPlanResult plan)
+        {
+            HashSet<int> readyTreeRecipes = new HashSet<int>();
+            HashSet<int> readyLeafRecipes = new HashSet<int>();
+            Dictionary<Recipe, bool> availability = new Dictionary<Recipe, bool>();
+
+            foreach (Recipe recipe in plan.RequiredRecipes)
+            {
+                if (IsRecipeReady(recipe, availability))
+                {
+                    readyTreeRecipes.Add(recipe.index);
+                }
+            }
+
+            foreach (Recipe recipe in plan.LeafProducerRecipes)
+            {
+                if (!readyTreeRecipes.Contains(recipe.index) && IsRecipeReady(recipe, availability))
+                {
+                    readyLeafRecipes.Add(recipe.index);
+                }
+            }
+
+            if (_readyTreeRecipes.SetEquals(readyTreeRecipes) &&
+                _readyLeafRecipes.SetEquals(readyLeafRecipes))
+            {
+                return;
+            }
+
+            _readyTreeRecipes.Clear();
+            _readyTreeRecipes.UnionWith(readyTreeRecipes);
+            _readyLeafRecipes.Clear();
+            _readyLeafRecipes.UnionWith(readyLeafRecipes);
+            ApplyRecipeListHighlights();
+        }
+
+        private static bool IsRecipeReady(
+            Recipe recipe,
+            Dictionary<Recipe, bool> availability)
+        {
+            if (recipe == null || !recipe.visible)
+            {
+                return false;
+            }
+
+            if (!availability.TryGetValue(recipe, out bool ready))
+            {
+                ready = recipe.GetItemsForRecipe() != null;
+                availability.Add(recipe, ready);
+            }
+
+            return ready;
+        }
+
+        private void ClearReadyRecipes()
+        {
+            if (_readyTreeRecipes.Count == 0 && _readyLeafRecipes.Count == 0)
+            {
+                return;
+            }
+
+            _readyTreeRecipes.Clear();
+            _readyLeafRecipes.Clear();
+            ApplyRecipeListHighlights();
+        }
+
+        private void ApplyRecipeListHighlights()
+        {
+            _recipeRows.Sort((left, right) =>
+            {
+                int priority = RecipePriority(left.Recipe).CompareTo(RecipePriority(right.Recipe));
+                return priority != 0
+                    ? priority
+                    : left.OriginalOrder.CompareTo(right.OriginalOrder);
+            });
+
+            for (int index = 0; index < _recipeRows.Count; index++)
+            {
+                RecipeRowBinding binding = _recipeRows[index];
+                if (binding.RectTransform == null || binding.Background == null ||
+                    binding.Overlay == null || binding.Accent == null)
+                {
+                    continue;
+                }
+
+                int priority = RecipePriority(binding.Recipe);
+                Color highlight = priority == 0
+                    ? ReadyTreeRecipeColor
+                    : ReadyLeafRecipeColor;
+                bool highlighted = priority < 2;
+
+                Vector2 position = binding.RectTransform.anchoredPosition;
+                position.y = -index * 64f;
+                binding.RectTransform.anchoredPosition = position;
+                binding.Background.color = binding.OriginalBackground;
+                binding.Overlay.color = highlighted
+                    ? new Color(highlight.r, highlight.g, highlight.b, 0.34f)
+                    : Color.clear;
+                binding.Accent.color = highlighted ? highlight : Color.clear;
+            }
+        }
+
+        private int RecipePriority(Recipe recipe)
+        {
+            if (recipe != null && _readyTreeRecipes.Contains(recipe.index))
+            {
+                return 0;
+            }
+
+            return recipe != null && _readyLeafRecipes.Contains(recipe.index) ? 1 : 2;
+        }
+
+        private static string BuildRemainingText(
+            CraftingTreeNode root,
+            IReadOnlyList<RemainingMaterial> materials)
+        {
+            StringBuilder text = new StringBuilder();
+            text.Append(root.SelectedRecipe.fullName)
+                .Append(":\n<color=#8D948F>")
+                .Append(EmiText.RemainingMaterials)
+                .Append("</color>\n");
+
+            if (materials.Count == 0)
+            {
+                text.Append("<color=#59FF59><sprite index=23>")
+                    .Append(EmiText.MaterialsReady)
+                    .Append("</color>");
+                return text.ToString();
+            }
+
+            foreach (RemainingMaterial material in materials)
+            {
+                text.Append("<color=#FFFFFF><sprite index=24>")
+                    .Append(FormatRemainingMaterial(material))
+                    .Append("</color>\n");
+            }
+
+            return text.ToString().TrimEnd('\n');
+        }
+
+        private static string FormatRemainingMaterial(RemainingMaterial material)
+        {
+            RecipeItem requirement = material.Requirement;
+            string name;
+            switch (material.Kind)
+            {
+                case RemainingMaterialKind.ConcreteItem:
+                case RemainingMaterialKind.ConcreteLiquid:
+                    name = material.Resource.HasValue ? material.Resource.Value.DisplayName : "?";
+                    break;
+
+                case RemainingMaterialKind.QualityLiquid:
+                    name = EmiText.FormatQualityLiquidRequirement(
+                        requirement.quality.LocaleName,
+                        material.Amount.ToString("0.#", CultureInfo.InvariantCulture));
+                    break;
+
+                default:
+                    bool isTool = requirement.quality.id == "cutting" ||
+                                  requirement.quality.id == "hammering";
+                    name = EmiText.FormatQualityItem(
+                        requirement.quality.LocaleName,
+                        isTool);
+                    break;
+            }
+
+            if (material.Kind == RemainingMaterialKind.ConcreteLiquid)
+            {
+                name += " (" + material.Amount.ToString("0.#", CultureInfo.InvariantCulture) + "mL)";
+            }
+            else if (material.UsesDurability)
+            {
+                name += " (" + EmiText.FormatRequiredUses(material.ItemCount) + ")";
+            }
+            else if (material.Kind != RemainingMaterialKind.QualityLiquid && material.ItemCount > 1)
+            {
+                name += " (x" + material.ItemCount.ToString(CultureInfo.InvariantCulture) + ")";
+            }
+
+            if (requirement != null && !requirement.isLiquid && requirement.minimumCondition > 0f)
+            {
+                name += " [" + (requirement.minimumCondition * 100f)
+                    .ToString("0.#", CultureInfo.InvariantCulture) + "%+]";
+            }
+
+            if (material.UsesDurability)
+            {
+                name += " | " + EmiText.ConsumesDurability;
+            }
+
+            return name;
         }
 
         private void RenderNode(CraftingTreeNode node)
@@ -394,9 +757,7 @@ namespace EMI
             Image background = UiFactory.CreatePanel(
                 "Node_" + node.Depth.ToString(CultureInfo.InvariantCulture),
                 _treeContent,
-                node.IsRoot
-                    ? new Color(0.06f, 0.16f, 0.08f, 1f)
-                    : (node.Depth % 2 == 0 ? UiFactory.RaisedBlack : UiFactory.Black),
+                GetTreeRowColor(node),
                 true);
             LayoutElement layout = background.gameObject.AddComponent<LayoutElement>();
             layout.minHeight = 54f;
@@ -452,15 +813,71 @@ namespace EMI
                     new Vector2(1f, 0.5f),
                     new Vector2(-7f, 0f),
                     new Vector2(42f, 36f));
-                UiFactory.AddTooltip(choose.gameObject, EmiText.ChooseRecipe, GetNodeName(node));
+                bool choosesMaterial = node.IsQualityRequirement && node.SelectedCandidate == null;
+                string tooltipTitle = choosesMaterial
+                    ? EmiText.ChooseMaterial
+                    : EmiText.ChooseRecipe;
+                UiFactory.AddTooltip(
+                    choose.gameObject,
+                    tooltipTitle,
+                    EmiText.FormatChooseDescription(GetNodeName(node), choosesMaterial));
             }
 
             return background.gameObject;
         }
 
+        private Color GetTreeRowColor(CraftingTreeNode node)
+        {
+            if (node.IsRoot)
+            {
+                return new Color(0.06f, 0.16f, 0.08f, 1f);
+            }
+
+            bool expanded = node.SelectedRecipe != null &&
+                            !node.IsCycleBoundary;
+            if (expanded)
+            {
+                return node.Depth % 2 == 0 ? UiFactory.RaisedBlack : UiFactory.Black;
+            }
+
+            return CanExpandLeaf(node) ? ExpandableLeafColor : TerminalLeafColor;
+        }
+
+        private bool CanExpandLeaf(CraftingTreeNode node)
+        {
+            if (node.IsRoot || node.IsCycleBoundary)
+            {
+                return false;
+            }
+
+            if (node.Resource.HasValue)
+            {
+                return RecipeCatalog.GetCompatibleProducers(
+                    node.Resource.Value,
+                    node.Requirement).Count > 0;
+            }
+
+            if (!node.IsQualityRequirement)
+            {
+                return false;
+            }
+
+            foreach (ResourceCandidate candidate in _model.GetSharedCandidates(node))
+            {
+                if (RecipeCatalog.GetCompatibleProducers(
+                        candidate.Resource,
+                        node.Requirement).Count > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private bool CanChoose(CraftingTreeNode node)
         {
-            if (node.IsRoot || node.IsCycleBoundary || node.IsSharedReusable)
+            if (node.IsRoot || node.IsCycleBoundary)
             {
                 return false;
             }
@@ -471,7 +888,8 @@ namespace EMI
             }
 
             return node.Resource.HasValue &&
-                   (node.SelectedRecipe != null || RecipeCatalog.GetProducers(node.Resource.Value).Count > 0);
+                   (node.SelectedRecipe != null ||
+                    RecipeCatalog.GetCompatibleProducers(node.Resource.Value, node.Requirement).Count > 0);
         }
 
         private void OpenNodeChoices(CraftingTreeNode node)
@@ -488,7 +906,20 @@ namespace EMI
         private void OpenCandidateChoices(CraftingTreeNode node)
         {
             OpenPopup(EmiText.ChooseMaterial);
-            List<ResourceCandidate> candidates = RecipeCatalog.GetCandidates(node.Requirement);
+            List<ResourceCandidate> candidates = _model.GetSharedCandidates(node);
+
+            if (node.SelectedCandidate != null)
+            {
+                AddCommandRow(
+                    EmiText.UseQualityRequirement,
+                    EmiText.UseQualityRequirementDescription,
+                    () =>
+                {
+                    _model.ClearCandidate(node);
+                    ClosePopup();
+                    RenderTree();
+                });
+            }
 
             foreach (ResourceCandidate candidate in candidates)
             {
@@ -502,8 +933,8 @@ namespace EMI
                         _model.SelectCandidate(node, candidate);
                         RenderTree();
 
-                        if (!node.IsCycleBoundary && !node.IsSharedReusable &&
-                            RecipeCatalog.GetProducers(candidate.Resource).Count > 0)
+                        if (!node.IsCycleBoundary &&
+                            RecipeCatalog.GetCompatibleProducers(candidate.Resource, node.Requirement).Count > 0)
                         {
                             OpenRecipeChoices(node);
                         }
@@ -525,12 +956,18 @@ namespace EMI
 
             if (node.IsQualityRequirement)
             {
-                AddCommandRow(EmiText.ChangeMaterial, () => OpenCandidateChoices(node));
+                AddCommandRow(
+                    EmiText.ChangeMaterial,
+                    EmiText.ChangeMaterialDescription,
+                    () => OpenCandidateChoices(node));
             }
 
             if (node.SelectedRecipe != null)
             {
-                AddCommandRow(EmiText.StopHere, () =>
+                AddCommandRow(
+                    EmiText.StopHere,
+                    EmiText.StopHereDescription,
+                    () =>
                 {
                     _model.StopExpansion(node);
                     ClosePopup();
@@ -538,7 +975,8 @@ namespace EMI
                 });
             }
 
-            IReadOnlyList<Recipe> producers = RecipeCatalog.GetProducers(node.Resource.Value);
+            IReadOnlyList<Recipe> producers =
+                RecipeCatalog.GetCompatibleProducers(node.Resource.Value, node.Requirement);
             foreach (Recipe producer in producers)
             {
                 Recipe captured = producer;
@@ -579,9 +1017,15 @@ namespace EMI
             }
         }
 
-        private void AddCommandRow(string label, Action action)
+        private void AddCommandRow(string label, string description, Action action)
         {
-            AddPopupRow(null, label, string.Empty, action, UiFactory.Yellow);
+            AddPopupRow(
+                null,
+                label,
+                string.Empty,
+                action,
+                UiFactory.Yellow,
+                description);
         }
 
         private void AddInfoRow(string label)
@@ -594,7 +1038,8 @@ namespace EMI
             string label,
             string detail,
             Action action,
-            Color? accent = null)
+            Color? accent = null,
+            string tooltipDescription = null)
         {
             Image background = UiFactory.CreatePanel("Option", _popupContent, UiFactory.RaisedBlack, true);
             LayoutElement layout = background.gameObject.AddComponent<LayoutElement>();
@@ -612,6 +1057,10 @@ namespace EMI
                 colors.highlightedColor = new Color(0.7f, 0.8f, 0.72f, 1f);
                 colors.pressedColor = new Color(0.32f, 0.85f, 0.38f, 1f);
                 button.colors = colors;
+                UiFactory.AddTooltip(
+                    background.gameObject,
+                    label,
+                    tooltipDescription ?? detail);
             }
 
             Image icon = UiFactory.CreatePanel("Icon", background.transform, Color.white, true);
@@ -651,21 +1100,18 @@ namespace EMI
             }
             else
             {
-                string kind;
                 if (node.Requirement.isLiquid)
                 {
-                    kind = Locale.GetOther("craftanyliquid");
+                    name = EmiText.FormatQualityLiquid(node.Requirement.quality.LocaleName);
                 }
                 else if (node.Requirement.quality.id == "cutting" || node.Requirement.quality.id == "hammering")
                 {
-                    kind = Locale.GetOther("craftanytool");
+                    name = EmiText.FormatQualityItem(node.Requirement.quality.LocaleName, true);
                 }
                 else
                 {
-                    kind = Locale.GetOther("craftanyitem");
+                    name = EmiText.FormatQualityItem(node.Requirement.quality.LocaleName, false);
                 }
-
-                name = kind + " | " + node.Requirement.quality.LocaleName;
             }
 
             if (node.IsRoot)
@@ -677,6 +1123,11 @@ namespace EMI
             {
                 return name + " (" +
                        node.RequiredLiquidAmount.ToString("0.#", CultureInfo.InvariantCulture) + "mL)";
+            }
+
+            if (node.UsesDurability)
+            {
+                return name + " (" + EmiText.FormatRequiredUses(node.RequiredItemCount) + ")";
             }
 
             return node.RequiredItemCount > 1
@@ -703,14 +1154,25 @@ namespace EMI
 
                 if (!requirement.specific && requirement.quality != null)
                 {
-                    parts.Add(requirement.quality.LocaleName + " >= " +
-                              requirement.quality.amount.ToString("0.#", CultureInfo.InvariantCulture));
+                    if (requirement.isLiquid && !node.Resource.HasValue)
+                    {
+                        float totalQuality = requirement.quality.amount *
+                                             node.RequirementMultiplicity *
+                                             node.ParentCraftRuns;
+                        parts.Add(EmiText.FormatQualityAmountRequired(
+                            totalQuality.ToString("0.#", CultureInfo.InvariantCulture)));
+                    }
+                    else if (requirement.quality.amount > 1f)
+                    {
+                        parts.Add(requirement.quality.LocaleName + " >= " +
+                                  requirement.quality.amount.ToString("0.#", CultureInfo.InvariantCulture));
+                    }
                 }
             }
 
-            if (node.IsReusable)
+            if (node.UsesDurability)
             {
-                parts.Add(EmiText.Reusable);
+                parts.Add(EmiText.ConsumesDurability);
             }
 
             if (node.SelectedRecipe != null && !node.IsRoot)
@@ -722,12 +1184,8 @@ namespace EMI
             {
                 parts.Add(EmiText.CycleBoundary);
             }
-            else if (node.IsSharedReusable)
-            {
-                parts.Add(EmiText.SharedReusable);
-            }
             else if (!node.IsRoot && node.Resource.HasValue && node.SelectedRecipe == null &&
-                     RecipeCatalog.GetProducers(node.Resource.Value).Count == 0)
+                     RecipeCatalog.GetCompatibleProducers(node.Resource.Value, node.Requirement).Count == 0)
             {
                 parts.Add(EmiText.RawMaterial);
             }
@@ -744,7 +1202,7 @@ namespace EMI
                 parts.Add(totalAmount.ToString("0.#", CultureInfo.InvariantCulture) + "mL");
             }
 
-            int producers = RecipeCatalog.GetProducers(candidate.Resource).Count;
+            int producers = RecipeCatalog.GetCompatibleProducers(candidate.Resource, node.Requirement).Count;
             parts.Add(producers > 0
                 ? producers.ToString(CultureInfo.InvariantCulture) + " " + EmiText.ChooseRecipe
                 : EmiText.RawMaterial);

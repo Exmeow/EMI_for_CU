@@ -57,16 +57,14 @@ namespace EMI
 
         public bool IsCycleBoundary { get; internal set; }
 
-        public bool IsSharedReusable { get; internal set; }
-
         public bool IsRoot => Parent == null;
 
         public bool IsQualityRequirement => Requirement != null && !Requirement.specific;
 
-        public bool IsReusable => Requirement != null && !Requirement.isLiquid && !Requirement.destroyItem;
+        public bool UsesDurability => DurabilityRequirement.AppliesTo(Requirement);
 
         public bool CanShowChildren =>
-            SelectedRecipe != null && !IsCycleBoundary && !IsSharedReusable;
+            SelectedRecipe != null && !IsCycleBoundary;
 
         public int CraftRuns
         {
@@ -88,6 +86,17 @@ namespace EMI
                                            Math.Max(1, SelectedRecipe.result.amount);
                     return outputPerCraft > 0f
                         ? Math.Max(1, (int)Math.Ceiling(RequiredLiquidAmount / outputPerCraft))
+                        : 1;
+                }
+
+                if (UsesDurability)
+                {
+                    int usesPerCraft = DurabilityRequirement.GetUsesPerCraft(
+                        SelectedRecipe.result,
+                        Requirement,
+                        RequiredItemCount);
+                    return usesPerCraft > 0
+                        ? Math.Max(1, (int)Math.Ceiling((double)RequiredItemCount / usesPerCraft))
                         : 1;
                 }
 
@@ -166,9 +175,7 @@ namespace EMI
                 return;
             }
 
-            RequiredItemCount = IsReusable
-                ? 1
-                : RequirementMultiplicity * ParentCraftRuns;
+            RequiredItemCount = RequirementMultiplicity * ParentCraftRuns;
         }
 
         private static List<RequirementGroup> GroupRequirements(List<RecipeItem> requirements)
@@ -238,6 +245,9 @@ namespace EMI
         private readonly Dictionary<ResourceKey, Recipe> _selectedRecipes =
             new Dictionary<ResourceKey, Recipe>();
 
+        private readonly Dictionary<QualityRequirementKey, ResourceCandidate> _selectedCandidates =
+            new Dictionary<QualityRequirementKey, ResourceCandidate>();
+
         public CraftingTreeNode Root { get; private set; }
 
         public Recipe RootRecipe => Root?.SelectedRecipe;
@@ -245,6 +255,7 @@ namespace EMI
         public void SetRoot(Recipe recipe)
         {
             _selectedRecipes.Clear();
+            _selectedCandidates.Clear();
             Root = recipe == null ? null : CraftingTreeNode.CreateRoot(recipe);
 
             if (Root?.Resource != null)
@@ -259,6 +270,7 @@ namespace EMI
         {
             Root = null;
             _selectedRecipes.Clear();
+            _selectedCandidates.Clear();
         }
 
         public void ResetSelections()
@@ -269,14 +281,52 @@ namespace EMI
             }
         }
 
+        public List<ResourceCandidate> GetSharedCandidates(CraftingTreeNode node)
+        {
+            List<ResourceCandidate> candidates = RecipeCatalog.GetCandidates(node?.Requirement);
+            if (Root == null || node == null ||
+                !QualityRequirementKey.TryCreate(node.Requirement, out QualityRequirementKey key))
+            {
+                return candidates;
+            }
+
+            for (int index = candidates.Count - 1; index >= 0; index--)
+            {
+                if (!CandidateAllowedInTree(Root, key, candidates[index]))
+                {
+                    candidates.RemoveAt(index);
+                }
+            }
+
+            return candidates;
+        }
+
         public void SelectCandidate(CraftingTreeNode node, ResourceCandidate candidate)
         {
-            if (node == null)
+            if (Root == null || node == null || candidate == null ||
+                !QualityRequirementKey.TryCreate(node.Requirement, out QualityRequirementKey key))
             {
                 return;
             }
 
-            node.SelectCandidate(candidate);
+            if (!CandidateAllowedInTree(Root, key, candidate))
+            {
+                return;
+            }
+
+            _selectedCandidates[key] = candidate;
+            EvaluateBoundaries();
+        }
+
+        public void ClearCandidate(CraftingTreeNode node)
+        {
+            if (node == null ||
+                !QualityRequirementKey.TryCreate(node.Requirement, out QualityRequirementKey key))
+            {
+                return;
+            }
+
+            _selectedCandidates.Remove(key);
             EvaluateBoundaries();
         }
 
@@ -289,7 +339,7 @@ namespace EMI
 
             ResourceKey resource = node.Resource.Value;
             ResourceKey result = new ResourceKey(recipe.result.id, recipe.result.isLiquid);
-            if (resource != result)
+            if (resource != result || !RecipeCatalog.IsProducerCompatible(recipe, node.Requirement))
             {
                 return;
             }
@@ -316,23 +366,89 @@ namespace EMI
                 return;
             }
 
-            ResetDerivedFlags(Root);
-            ApplySelectedRecipes(Root, new HashSet<ResourceKey>());
-            EvaluateReusableReferences();
+            bool removedIncompatibleSelection;
+            do
+            {
+                ResetDerivedFlags(Root);
+                ApplySelections(Root, new HashSet<ResourceKey>());
+                removedIncompatibleSelection = RemoveIncompatibleCandidateSelections();
+            }
+            while (removedIncompatibleSelection);
+
+        }
+
+        private bool RemoveIncompatibleCandidateSelections()
+        {
+            HashSet<QualityRequirementKey> incompatible = new HashSet<QualityRequirementKey>();
+            FindIncompatibleCandidateSelections(Root, incompatible);
+            foreach (QualityRequirementKey key in incompatible)
+            {
+                _selectedCandidates.Remove(key);
+            }
+
+            return incompatible.Count > 0;
+        }
+
+        private void FindIncompatibleCandidateSelections(
+            CraftingTreeNode node,
+            HashSet<QualityRequirementKey> incompatible)
+        {
+            if (QualityRequirementKey.TryCreate(node.Requirement, out QualityRequirementKey key) &&
+                _selectedCandidates.TryGetValue(key, out ResourceCandidate candidate) &&
+                !RecipeCatalog.IsCandidateCompatible(candidate, node.Requirement))
+            {
+                incompatible.Add(key);
+            }
+
+            foreach (CraftingTreeNode child in node.Children)
+            {
+                FindIncompatibleCandidateSelections(child, incompatible);
+            }
+        }
+
+        private static bool CandidateAllowedInTree(
+            CraftingTreeNode node,
+            QualityRequirementKey key,
+            ResourceCandidate candidate)
+        {
+            if (QualityRequirementKey.TryCreate(node.Requirement, out QualityRequirementKey nodeKey) &&
+                key.Equals(nodeKey) &&
+                !RecipeCatalog.IsCandidateCompatible(candidate, node.Requirement))
+            {
+                return false;
+            }
+
+            foreach (CraftingTreeNode child in node.Children)
+            {
+                if (!CandidateAllowedInTree(child, key, candidate))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static void ResetDerivedFlags(CraftingTreeNode node)
         {
             node.IsCycleBoundary = false;
-            node.IsSharedReusable = false;
             foreach (CraftingTreeNode child in node.Children)
             {
                 ResetDerivedFlags(child);
             }
         }
 
-        private void ApplySelectedRecipes(CraftingTreeNode node, HashSet<ResourceKey> ancestors)
+        private void ApplySelections(CraftingTreeNode node, HashSet<ResourceKey> ancestors)
         {
+            if (QualityRequirementKey.TryCreate(node.Requirement, out QualityRequirementKey qualityKey))
+            {
+                _selectedCandidates.TryGetValue(qualityKey, out ResourceCandidate selectedCandidate);
+                if (!CandidatesMatch(node.SelectedCandidate, selectedCandidate))
+                {
+                    node.SelectCandidate(selectedCandidate);
+                }
+            }
+
             bool added = false;
             if (node.Resource.HasValue)
             {
@@ -340,7 +456,8 @@ namespace EMI
                 if (ancestors.Contains(resource))
                 {
                     node.IsCycleBoundary = true;
-                    if (_selectedRecipes.TryGetValue(resource, out Recipe cycleRecipe))
+                    if (_selectedRecipes.TryGetValue(resource, out Recipe cycleRecipe) &&
+                        RecipeCatalog.IsProducerCompatible(cycleRecipe, node.Requirement))
                     {
                         node.SetRecipe(cycleRecipe, false);
                     }
@@ -356,11 +473,18 @@ namespace EMI
                 {
                     if (_selectedRecipes.TryGetValue(resource, out Recipe selectedRecipe))
                     {
-                        bool needsChildren = selectedRecipe.items != null && selectedRecipe.items.Count > 0;
-                        if (node.SelectedRecipe != selectedRecipe ||
-                            (needsChildren && node.Children.Count == 0))
+                        if (!RecipeCatalog.IsProducerCompatible(selectedRecipe, node.Requirement))
                         {
-                            node.SetRecipe(selectedRecipe, true);
+                            node.SetRecipe(null, false);
+                        }
+                        else
+                        {
+                            bool needsChildren = selectedRecipe.items != null && selectedRecipe.items.Count > 0;
+                            if (node.SelectedRecipe != selectedRecipe ||
+                                (needsChildren && node.Children.Count == 0))
+                            {
+                                node.SetRecipe(selectedRecipe, true);
+                            }
                         }
                     }
                     else if (node.SelectedRecipe != null)
@@ -375,7 +499,7 @@ namespace EMI
 
             foreach (CraftingTreeNode child in node.Children)
             {
-                ApplySelectedRecipes(child, ancestors);
+                ApplySelections(child, ancestors);
             }
 
             if (added)
@@ -384,39 +508,16 @@ namespace EMI
             }
         }
 
-        private void EvaluateReusableReferences()
+        private static bool CandidatesMatch(ResourceCandidate left, ResourceCandidate right)
         {
-            HashSet<ResourceKey> seen = new HashSet<ResourceKey>();
-            Queue<CraftingTreeNode> queue = new Queue<CraftingTreeNode>();
-            queue.Enqueue(Root);
-
-            while (queue.Count > 0)
+            if (left == null || right == null)
             {
-                CraftingTreeNode node = queue.Dequeue();
-                if (node.IsCycleBoundary)
-                {
-                    continue;
-                }
-
-                if (node.IsReusable && node.Resource.HasValue)
-                {
-                    if (!seen.Add(node.Resource.Value))
-                    {
-                        node.IsSharedReusable = true;
-                        continue;
-                    }
-                }
-
-                if (node.SelectedRecipe == null)
-                {
-                    continue;
-                }
-
-                foreach (CraftingTreeNode child in node.Children)
-                {
-                    queue.Enqueue(child);
-                }
+                return left == right;
             }
+
+            return left.Resource == right.Resource &&
+                   left.RequiredLiquidAmount.Equals(right.RequiredLiquidAmount);
         }
+
     }
 }

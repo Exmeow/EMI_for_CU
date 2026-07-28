@@ -1,9 +1,0 @@
-D:\Program Files (x86)\Steam\steamapps\common\Casualties Unknown Demo\CraftingTree\bin\Debug\EMI.dll
-D:\Program Files (x86)\Steam\steamapps\common\Casualties Unknown Demo\CraftingTree\bin\Debug\EMI.pdb
-D:\Program Files (x86)\Steam\steamapps\common\Casualties Unknown Demo\CraftingTree\obj\Debug\EMI.csproj.AssemblyReference.cache
-D:\Program Files (x86)\Steam\steamapps\common\Casualties Unknown Demo\CraftingTree\obj\Debug\EMI.GeneratedMSBuildEditorConfig.editorconfig
-D:\Program Files (x86)\Steam\steamapps\common\Casualties Unknown Demo\CraftingTree\obj\Debug\EMI.AssemblyInfoInputs.cache
-D:\Program Files (x86)\Steam\steamapps\common\Casualties Unknown Demo\CraftingTree\obj\Debug\EMI.AssemblyInfo.cs
-D:\Program Files (x86)\Steam\steamapps\common\Casualties Unknown Demo\CraftingTree\obj\Debug\EMI.csproj.CoreCompileInputs.cache
-D:\Program Files (x86)\Steam\steamapps\common\Casualties Unknown Demo\CraftingTree\obj\Debug\EMI.dll
-D:\Program Files (x86)\Steam\steamapps\common\Casualties Unknown Demo\CraftingTree\obj\Debug\EMI.pdb
