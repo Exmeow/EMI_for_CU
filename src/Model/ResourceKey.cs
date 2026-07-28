@@ -18,7 +18,56 @@ namespace EMI
         {
             get
             {
-                return IsLiquid ? Locale.GetOther(Id) : Locale.GetItem(Id);
+                if (!IsLiquid)
+                {
+                    if (Item.GlobalItems != null &&
+                        Item.GlobalItems.TryGetValue(Id, out ItemInfo item) &&
+                        !string.IsNullOrEmpty(item?.fullName))
+                    {
+                        return item.fullName;
+                    }
+
+                    return Locale.GetItem(Id);
+                }
+
+                if (Liquids.Registry != null &&
+                    Liquids.Registry.TryGetValue(Id, out LiquidType liquid) &&
+                    liquid != null)
+                {
+                    return liquid.localeFromItem
+                        ? Locale.GetItem(Id)
+                        : Locale.GetOther(liquid.localeName);
+                }
+
+                return Locale.GetOther(Id);
+            }
+        }
+
+        public string Description
+        {
+            get
+            {
+                if (!IsLiquid)
+                {
+                    if (Item.GlobalItems != null &&
+                        Item.GlobalItems.TryGetValue(Id, out ItemInfo item) &&
+                        !string.IsNullOrEmpty(item?.description))
+                    {
+                        return item.description;
+                    }
+
+                    return Locale.GetItem(Id + "dsc");
+                }
+
+                if (Liquids.Registry != null &&
+                    Liquids.Registry.TryGetValue(Id, out LiquidType liquid) &&
+                    liquid != null)
+                {
+                    string localeId = liquid.localeFromItem ? Id : liquid.localeName;
+                    return Locale.GetOther(localeId + "dsc");
+                }
+
+                return Locale.GetOther(Id + "dsc");
             }
         }
 

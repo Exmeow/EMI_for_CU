@@ -4,16 +4,18 @@ using System.Globalization;
 using System.Text;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace EMI
 {
     internal sealed class CraftingTreeHud : MonoBehaviour
     {
-        private sealed class IconVisual
+        private enum HudPage
         {
-            public Sprite Sprite;
-            public Color Color;
+            Normal,
+            Tree,
+            Compendium
         }
 
         private sealed class RecipeRowBinding
@@ -39,9 +41,6 @@ namespace EMI
         private static readonly Color TerminalLeafColor =
             new Color(0.07f, 0.14f, 0.22f, 1f);
 
-        private static readonly Dictionary<ResourceKey, IconVisual> IconCache =
-            new Dictionary<ResourceKey, IconVisual>();
-
         private readonly CraftingTreeModel _model = new CraftingTreeModel();
         private readonly List<GameObject> _treeRows = new List<GameObject>();
         private readonly List<GameObject> _popupRows = new List<GameObject>();
@@ -60,9 +59,12 @@ namespace EMI
         private TextMeshProUGUI _popupTitle;
         private Image _normalTabImage;
         private Image _treeTabImage;
+        private Image _compendiumTabImage;
         private TextMeshProUGUI _normalTabText;
         private TextMeshProUGUI _treeTabText;
-        private bool _treeViewActive;
+        private TextMeshProUGUI _compendiumTabText;
+        private CompendiumPanel _compendium;
+        private HudPage _page;
         private bool _initialized;
         private float _nextRemainingRefreshTime;
         private string _remainingText = string.Empty;
@@ -129,8 +131,9 @@ namespace EMI
             EmiPlugin.Log?.LogInfo("[EMI] Creating HUD interface objects.");
             CreateInterface();
             EmiPlugin.Log?.LogInfo("[EMI] HUD interface objects created.");
+            PreferenceStore.Changed += HandlePreferencesChanged;
             HandlePinnedRecipeChanged(player);
-            SetTreeView(false, false);
+            SetPage(HudPage.Normal, false);
             _initialized = true;
             LogVisibility("after-initialize");
             EmiPlugin.Log?.LogInfo("[EMI] Crafting tree UI attached to PlayerCamera.");
@@ -150,12 +153,14 @@ namespace EMI
                 $"[EMI] HUD visibility ({stage}): ActiveSelf={gameObject.activeSelf}, " +
                 $"ActiveInHierarchy={gameObject.activeInHierarchy}, ChildCount={transform.childCount}, " +
                 $"TreeOverlayActive={_treeOverlay != null && _treeOverlay.gameObject.activeSelf}, " +
+                $"CompendiumActive={_compendium != null && _compendium.IsVisible}, " +
                 $"NormalTabActive={_normalTabImage != null && _normalTabImage.gameObject.activeInHierarchy}, " +
                 $"TreeTabActive={_treeTabImage != null && _treeTabImage.gameObject.activeInHierarchy}");
         }
 
         private void OnDestroy()
         {
+            PreferenceStore.Changed -= HandlePreferencesChanged;
             if (Active == this)
             {
                 Active = null;
@@ -169,8 +174,9 @@ namespace EMI
 
         public void HandleRecipesRebuilt()
         {
-            IconCache.Clear();
+            ResourceIconProvider.Clear();
             _model.Clear();
+            _compendium?.HandleCatalogRebuilt();
             HandlePinnedRecipeChanged(_player);
         }
 
@@ -195,7 +201,7 @@ namespace EMI
                 }
             }
 
-            if (_treeViewActive)
+            if (_page == HudPage.Tree)
             {
                 RenderTree();
             }
@@ -292,6 +298,7 @@ namespace EMI
             CreateTabs();
             CreateTreeOverlay();
             CreatePopup();
+            _compendium = CompendiumPanel.Create(transform, _font, _player);
         }
 
         private void CreateTabs()
@@ -301,7 +308,7 @@ namespace EMI
                 transform,
                 _font,
                 EmiText.NormalTab,
-                () => SetTreeView(false),
+                () => SetPage(HudPage.Normal),
                 out _normalTabImage,
                 out _normalTabText);
             UiFactory.Anchor(
@@ -320,7 +327,7 @@ namespace EMI
                 transform,
                 _font,
                 EmiText.TreeTab,
-                () => SetTreeView(true),
+                () => SetPage(HudPage.Tree),
                 out _treeTabImage,
                 out _treeTabText);
             UiFactory.Anchor(
@@ -333,11 +340,31 @@ namespace EMI
                 tree.gameObject,
                 EmiText.TreeTab,
                 EmiText.TreeTabDescription);
+
+            Button compendium = UiFactory.CreateButton(
+                "CompendiumTab",
+                transform,
+                _font,
+                EmiText.CompendiumTab,
+                () => SetPage(HudPage.Compendium),
+                out _compendiumTabImage,
+                out _compendiumTabText);
+            UiFactory.Anchor(
+                compendium.GetComponent<RectTransform>(),
+                new Vector2(1f, 1f),
+                new Vector2(0f, 1f),
+                new Vector2(8f, -110f),
+                new Vector2(112f, 40f));
+            UiFactory.AddTooltip(
+                compendium.gameObject,
+                EmiText.CompendiumTab,
+                EmiText.CompendiumTabDescription);
         }
 
         private void CreateTreeOverlay()
         {
             Image panel = UiFactory.CreatePanel("TreeOverlay", transform, UiFactory.Black, true);
+            UiFactory.BlockTooltipsBehind(panel.gameObject);
             _treeOverlay = panel.rectTransform;
             _treeOverlay.anchorMin = new Vector2(0.505f, 0.018f);
             _treeOverlay.anchorMax = new Vector2(0.992f, 0.988f);
@@ -395,6 +422,7 @@ namespace EMI
         private void CreatePopup()
         {
             Image popup = UiFactory.CreatePanel("SelectionPopup", _treeOverlay, UiFactory.Black, true);
+            UiFactory.BlockTooltipsBehind(popup.gameObject);
             _popup = popup.rectTransform;
             UiFactory.Stretch(_popup, 8f, 8f, 8f, 8f);
 
@@ -443,11 +471,14 @@ namespace EMI
             _popup.gameObject.SetActive(false);
         }
 
-        private void SetTreeView(bool active, bool playSound = true)
+        private void SetPage(HudPage page, bool playSound = true)
         {
-            _treeViewActive = active;
-            _treeOverlay.gameObject.SetActive(active);
-            if (!active)
+            _page = page;
+            bool treeActive = page == HudPage.Tree;
+            bool compendiumActive = page == HudPage.Compendium;
+            _treeOverlay.gameObject.SetActive(treeActive);
+            _compendium?.SetVisible(compendiumActive);
+            if (!treeActive)
             {
                 ClosePopup();
             }
@@ -460,19 +491,72 @@ namespace EMI
                 _normalTabImage,
                 _player.uiNano,
                 _player.darkenedUiNano,
-                !active);
+                page == HudPage.Normal);
             UiFactory.SetActiveSprite(
                 _treeTabImage,
                 _player.uiNano,
                 _player.darkenedUiNano,
-                active);
-            _normalTabText.color = active ? UiFactory.White : UiFactory.Green;
-            _treeTabText.color = active ? UiFactory.Green : UiFactory.White;
+                treeActive);
+            UiFactory.SetActiveSprite(
+                _compendiumTabImage,
+                _player.uiNano,
+                _player.darkenedUiNano,
+                compendiumActive);
+            _normalTabText.color = page == HudPage.Normal ? UiFactory.Green : UiFactory.White;
+            _treeTabText.color = treeActive ? UiFactory.Green : UiFactory.White;
+            _compendiumTabText.color = compendiumActive ? UiFactory.Green : UiFactory.White;
 
             if (playSound)
             {
                 _player.PlayUISound(PlayerCamera.UISoundType.MiniClick, 1f);
             }
+        }
+
+        private void HandlePreferencesChanged()
+        {
+            _model.EvaluateBoundaries();
+            if (_page == HudPage.Tree)
+            {
+                RenderTree();
+            }
+
+            _compendium?.HandlePreferencesChanged();
+            RefreshRemainingMaterials();
+        }
+
+        public bool ShouldCaptureCompendiumMouseInteraction()
+        {
+            return _page == HudPage.Compendium &&
+                   _compendium != null &&
+                   _compendium.IsPointerOverResourceEntry();
+        }
+
+        public bool TryGetForegroundCursor(out int cursor)
+        {
+            cursor = 0;
+            foreach (RaycastResult hit in UIUtil.GetEventSystemRaycastResults(null))
+            {
+                if (hit.gameObject.layer != LayerMask.NameToLayer("UI"))
+                {
+                    continue;
+                }
+
+                if (!hit.gameObject.transform.IsChildOf(transform))
+                {
+                    return false;
+                }
+
+                Button button = hit.gameObject.GetComponentInParent<Button>();
+                CompendiumResourceClickTarget resource =
+                    hit.gameObject.GetComponentInParent<CompendiumResourceClickTarget>();
+                bool interactive =
+                    (resource != null && resource.transform.IsChildOf(transform)) ||
+                    (button != null && button.interactable && button.transform.IsChildOf(transform));
+                cursor = interactive ? 4 : 3;
+                return true;
+            }
+
+            return false;
         }
 
         private void ResetTree()
@@ -524,7 +608,10 @@ namespace EMI
             {
                 _model.EvaluateBoundaries();
                 CraftingPlanResult plan = RemainingMaterialsCalculator.Calculate(root, _player.body);
-                _remainingText = BuildRemainingText(root, plan.RemainingMaterials);
+                _remainingText = BuildRemainingText(
+                    root,
+                    plan,
+                    _player.body.skills.INT);
                 UpdateReadyRecipes(plan);
                 _remainingCalculationFailed = false;
             }
@@ -657,15 +744,20 @@ namespace EMI
 
         private static string BuildRemainingText(
             CraftingTreeNode root,
-            IReadOnlyList<RemainingMaterial> materials)
+            CraftingPlanResult plan,
+            int currentInt)
         {
             StringBuilder text = new StringBuilder();
             text.Append(root.SelectedRecipe.fullName)
-                .Append(":\n<color=#8D948F>")
+                .Append(":\n");
+
+            AppendCraftingIntWarning(text, plan.RequiredRecipes, currentInt);
+
+            text.Append("<color=#8D948F>")
                 .Append(EmiText.RemainingMaterials)
                 .Append("</color>\n");
 
-            if (materials.Count == 0)
+            if (plan.RemainingMaterials.Count == 0)
             {
                 text.Append("<color=#59FF59><sprite index=23>")
                     .Append(EmiText.MaterialsReady)
@@ -673,7 +765,7 @@ namespace EMI
                 return text.ToString();
             }
 
-            foreach (RemainingMaterial material in materials)
+            foreach (RemainingMaterial material in plan.RemainingMaterials)
             {
                 text.Append("<color=#FFFFFF><sprite index=24>")
                     .Append(FormatRemainingMaterial(material))
@@ -681,6 +773,32 @@ namespace EMI
             }
 
             return text.ToString().TrimEnd('\n');
+        }
+
+        private static void AppendCraftingIntWarning(
+            StringBuilder text,
+            IEnumerable<Recipe> requiredRecipes,
+            int currentInt)
+        {
+            int requiredInt = currentInt;
+            foreach (Recipe recipe in requiredRecipes)
+            {
+                if (recipe != null && recipe.INT > requiredInt)
+                {
+                    requiredInt = recipe.INT;
+                }
+            }
+
+            int deficit = requiredInt - currentInt;
+            if (deficit <= 0)
+            {
+                return;
+            }
+
+            bool impossible = deficit > 3;
+            text.Append(impossible ? "<color=#FF4740>" : "<color=#FFDB38>")
+                .Append(EmiText.FormatCraftingIntWarning(requiredInt, impossible))
+                .Append("</color>\n");
         }
 
         private static string FormatRemainingMaterial(RemainingMaterial material)
@@ -814,13 +932,27 @@ namespace EMI
                     new Vector2(-7f, 0f),
                     new Vector2(42f, 36f));
                 bool choosesMaterial = node.IsQualityRequirement && node.SelectedCandidate == null;
-                string tooltipTitle = choosesMaterial
-                    ? EmiText.ChooseMaterial
-                    : EmiText.ChooseRecipe;
+                string tooltipTitle;
+                string tooltipDescription;
+                if (node.IsRecipeLocked)
+                {
+                    tooltipTitle = EmiText.RecipeLocked;
+                    tooltipDescription = EmiText.RecipeLockedDescription;
+                }
+                else
+                {
+                    tooltipTitle = choosesMaterial
+                        ? EmiText.ChooseMaterial
+                        : EmiText.ChooseRecipe;
+                    tooltipDescription = EmiText.FormatChooseDescription(
+                        GetNodeName(node),
+                        choosesMaterial);
+                }
+
                 UiFactory.AddTooltip(
                     choose.gameObject,
                     tooltipTitle,
-                    EmiText.FormatChooseDescription(GetNodeName(node), choosesMaterial));
+                    tooltipDescription);
             }
 
             return background.gameObject;
@@ -906,6 +1038,13 @@ namespace EMI
         private void OpenCandidateChoices(CraftingTreeNode node)
         {
             OpenPopup(EmiText.ChooseMaterial);
+            if (node.IsCandidateLocked)
+            {
+                AddInfoRow(EmiText.CandidateLocked, EmiText.CandidateLockedDescription);
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_popupContent);
+                return;
+            }
+
             List<ResourceCandidate> candidates = _model.GetSharedCandidates(node);
 
             if (node.SelectedCandidate != null)
@@ -956,10 +1095,35 @@ namespace EMI
 
             if (node.IsQualityRequirement)
             {
-                AddCommandRow(
-                    EmiText.ChangeMaterial,
-                    EmiText.ChangeMaterialDescription,
-                    () => OpenCandidateChoices(node));
+                if (node.IsCandidateLocked)
+                {
+                    AddInfoRow(EmiText.CandidateLocked, EmiText.CandidateLockedDescription);
+                }
+                else
+                {
+                    AddCommandRow(
+                        EmiText.ChangeMaterial,
+                        EmiText.ChangeMaterialDescription,
+                        () => OpenCandidateChoices(node));
+                }
+            }
+
+            if (node.IsRecipeLocked)
+            {
+                AddInfoRow(EmiText.RecipeLocked, EmiText.RecipeLockedDescription);
+                if (node.SelectedRecipe != null)
+                {
+                    AddPopupRow(
+                        node.Resource.Value,
+                        node.SelectedRecipe.simpleName,
+                        GetRecipeDetail(node.SelectedRecipe),
+                        null,
+                        UiFactory.Green,
+                        EmiText.RecipeLockedDescription);
+                }
+
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_popupContent);
+                return;
             }
 
             if (node.SelectedRecipe != null)
@@ -1028,9 +1192,9 @@ namespace EMI
                 description);
         }
 
-        private void AddInfoRow(string label)
+        private void AddInfoRow(string label, string description = null)
         {
-            AddPopupRow(null, label, string.Empty, null, UiFactory.Muted);
+            AddPopupRow(null, label, string.Empty, null, UiFactory.Muted, description);
         }
 
         private void AddPopupRow(
@@ -1057,11 +1221,12 @@ namespace EMI
                 colors.highlightedColor = new Color(0.7f, 0.8f, 0.72f, 1f);
                 colors.pressedColor = new Color(0.32f, 0.85f, 0.38f, 1f);
                 button.colors = colors;
-                UiFactory.AddTooltip(
-                    background.gameObject,
-                    label,
-                    tooltipDescription ?? detail);
             }
+
+            UiFactory.AddTooltip(
+                background.gameObject,
+                label,
+                tooltipDescription ?? detail);
 
             Image icon = UiFactory.CreatePanel("Icon", background.transform, Color.white, true);
             UiFactory.Anchor(
@@ -1177,7 +1342,17 @@ namespace EMI
 
             if (node.SelectedRecipe != null && !node.IsRoot)
             {
-                parts.Add("<- " + node.SelectedRecipe.simpleName);
+                parts.Add(EmiText.MadeUsingSelectedRecipe);
+            }
+
+            if (node.IsCandidateLocked)
+            {
+                parts.Add(EmiText.CandidateLocked);
+            }
+
+            if (node.IsRecipeLocked)
+            {
+                parts.Add(EmiText.RecipeLocked);
             }
 
             if (node.IsCycleBoundary)
@@ -1221,56 +1396,7 @@ namespace EMI
 
         private static void ApplyIcon(Image image, ResourceKey? resource)
         {
-            if (!resource.HasValue)
-            {
-                image.sprite = null;
-                image.color = new Color(0.12f, 0.14f, 0.13f, 1f);
-                return;
-            }
-
-            IconVisual visual = GetIcon(resource.Value);
-            image.sprite = visual.Sprite;
-            image.color = visual.Sprite != null ? visual.Color : new Color(0.12f, 0.14f, 0.13f, 1f);
-            image.preserveAspect = true;
-        }
-
-        private static IconVisual GetIcon(ResourceKey resource)
-        {
-            if (IconCache.TryGetValue(resource, out IconVisual cached))
-            {
-                return cached;
-            }
-
-            IconVisual visual = new IconVisual
-            {
-                Color = Color.white
-            };
-
-            try
-            {
-                if (resource.IsLiquid)
-                {
-                    visual.Sprite = Resources.Load<Sprite>("Sprites/droplet");
-                    if (Liquids.Registry != null &&
-                        Liquids.Registry.TryGetValue(resource.Id, out LiquidType liquid))
-                    {
-                        visual.Color = liquid.color;
-                    }
-                }
-                else
-                {
-                    GameObject prefab = Resources.Load<GameObject>(resource.Id);
-                    SpriteRenderer renderer = prefab != null ? prefab.GetComponent<SpriteRenderer>() : null;
-                    visual.Sprite = renderer != null ? renderer.sprite : null;
-                }
-            }
-            catch (Exception exception)
-            {
-                EmiPlugin.Log?.LogWarning($"Could not load icon for {resource}: {exception.Message}");
-            }
-
-            IconCache[resource] = visual;
-            return visual;
+            ResourceIconProvider.Apply(image, resource);
         }
 
         private static void ClearObjects(List<GameObject> objects)

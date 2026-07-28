@@ -140,6 +140,99 @@ namespace EMI
             return scroll;
         }
 
+        public static ScrollRect CreateGridScrollView(
+            string name,
+            Transform parent,
+            int columns,
+            Vector2 cellSize,
+            out RectTransform content)
+        {
+            Image background = CreatePanel(name, parent, Black);
+            ScrollRect scroll = background.gameObject.AddComponent<ScrollRect>();
+            scroll.horizontal = false;
+            scroll.vertical = true;
+            scroll.movementType = ScrollRect.MovementType.Clamped;
+            scroll.scrollSensitivity = 36f;
+
+            Image viewportImage = CreatePanel("Viewport", background.transform, Color.clear);
+            RectTransform viewport = viewportImage.rectTransform;
+            Stretch(viewport, 2f, 2f, 2f, 2f);
+            viewportImage.gameObject.AddComponent<RectMask2D>();
+
+            content = CreateRect("Content", viewport);
+            content.anchorMin = new Vector2(0f, 1f);
+            content.anchorMax = new Vector2(1f, 1f);
+            content.pivot = new Vector2(0.5f, 1f);
+            content.anchoredPosition = Vector2.zero;
+            content.sizeDelta = Vector2.zero;
+
+            GridLayoutGroup layout = content.gameObject.AddComponent<GridLayoutGroup>();
+            layout.padding = new RectOffset(4, 4, 4, 4);
+            layout.spacing = new Vector2(4f, 4f);
+            layout.cellSize = cellSize;
+            layout.startCorner = GridLayoutGroup.Corner.UpperLeft;
+            layout.startAxis = GridLayoutGroup.Axis.Horizontal;
+            layout.childAlignment = TextAnchor.UpperCenter;
+            layout.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            layout.constraintCount = Math.Max(1, columns);
+
+            ContentSizeFitter fitter = content.gameObject.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            scroll.viewport = viewport;
+            scroll.content = content;
+            return scroll;
+        }
+
+        public static TMP_InputField CreateInputField(
+            string name,
+            Transform parent,
+            TMP_FontAsset font,
+            string placeholder,
+            Action<string> changed,
+            out Image background)
+        {
+            background = CreatePanel(name, parent, RaisedBlack, true);
+            TMP_InputField input = background.gameObject.AddComponent<TMP_InputField>();
+            input.lineType = TMP_InputField.LineType.SingleLine;
+            input.characterLimit = 80;
+
+            Image viewportImage = CreatePanel("Viewport", background.transform, Color.clear);
+            viewportImage.raycastTarget = false;
+            Stretch(viewportImage.rectTransform, 9f, 34f, 4f, 4f);
+            viewportImage.gameObject.AddComponent<RectMask2D>();
+
+            TextMeshProUGUI text = CreateText(
+                "Text",
+                viewportImage.transform,
+                font,
+                17f,
+                TextAlignmentOptions.Left);
+            Stretch(text.rectTransform, 0f, 0f, 0f, 0f);
+            text.overflowMode = TextOverflowModes.Masking;
+
+            TextMeshProUGUI hint = CreateText(
+                "Placeholder",
+                viewportImage.transform,
+                font,
+                17f,
+                TextAlignmentOptions.Left);
+            Stretch(hint.rectTransform, 0f, 0f, 0f, 0f);
+            hint.color = Muted;
+            hint.text = placeholder;
+
+            input.textViewport = viewportImage.rectTransform;
+            input.textComponent = text;
+            input.placeholder = hint;
+            if (changed != null)
+            {
+                input.onValueChanged.AddListener(value => changed(value));
+            }
+
+            return input;
+        }
+
         public static void AddTooltip(GameObject target, string title, string description)
         {
             UITooltip tooltip = target.GetComponent<UITooltip>();
@@ -151,6 +244,11 @@ namespace EMI
             tooltip.skipLocale = true;
             tooltip.tipName = title;
             tooltip.tipDesc = description;
+        }
+
+        public static void BlockTooltipsBehind(GameObject target)
+        {
+            AddTooltip(target, string.Empty, string.Empty);
         }
 
         public static void Stretch(

@@ -17,7 +17,17 @@ location.
 
 ## Current scope
 
-- Adds normal-recipe and crafting-tree tabs to the crafting panel.
+- Adds normal-recipe, crafting-tree, and compendium tabs to the crafting panel.
+- Lists every registered item and liquid in a searchable icon grid using the
+  active game's localized names and descriptions.
+- Opens producer recipes with left click and usage recipes with right or middle
+  click without closing the crafting panel.
+- Includes a quality catalog listing every compatible item and liquid together
+  with its quality value.
+- Persists preferred producer recipes and quality candidates in
+  `BepInEx\plugins\EMI\preferences.json`.
+- Applies compatible preferences to the crafting tree as locked selections;
+  repair recipes are visible in the catalog but cannot be preferred.
 - Uses the pinned recipe as the tree root.
 - Applies each producer selection to every occurrence of the same product.
 - Applies each quality-material selection to every matching visible quality
@@ -43,3 +53,7 @@ location.
   blue, while leaving expanded nodes in their normal row colors.
 - Formats abstract quality items and liquids in natural language, and gives
   EMI buttons native hover tooltips with descriptive secondary text.
+- Prevents hover tooltips from covered original controls from appearing through
+  the crafting-tree overlay and its selection popup.
+- Prevents covered original buttons from changing the cursor shown over EMI
+  blank areas.

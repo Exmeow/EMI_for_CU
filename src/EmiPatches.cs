@@ -23,6 +23,8 @@ namespace EMI
                 try
                 {
                     RecipeCatalog.Rebuild();
+                    CompendiumCatalog.Rebuild();
+                    PreferenceStore.ResolveRecipes();
                     CraftingTreeHud.Active?.HandleRecipesRebuilt();
                 }
                 catch (Exception exception)
@@ -54,6 +56,12 @@ namespace EMI
                     if (!RecipeCatalog.IsReady)
                     {
                         RecipeCatalog.Rebuild();
+                    }
+
+                    if (!CompendiumCatalog.IsReady)
+                    {
+                        CompendiumCatalog.Rebuild();
+                        PreferenceStore.ResolveRecipes();
                     }
 
                     CraftingTreeHud.Attach(__instance);
@@ -97,6 +105,55 @@ namespace EMI
                 catch (Exception exception)
                 {
                     EmiPlugin.Log?.LogError($"[EMI] PlayerCamera.LateUpdate postfix failed:\n{exception}");
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(PlayerCamera), nameof(PlayerCamera.OpenCraftScreen))]
+        private static class OpenCraftScreenPatch
+        {
+            private static bool Prefix()
+            {
+                try
+                {
+                    KeyCode interaction = KeyBinds.GetBind("iteminteract");
+                    bool mouseInteraction = interaction >= KeyCode.Mouse0 &&
+                                            interaction <= KeyCode.Mouse6 &&
+                                            Input.GetKeyDown(interaction);
+                    if (mouseInteraction &&
+                        CraftingTreeHud.Active?.ShouldCaptureCompendiumMouseInteraction() == true)
+                    {
+                        return false;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    EmiPlugin.Log?.LogError(
+                        $"[EMI] PlayerCamera.OpenCraftScreen prefix failed; " +
+                        $"the original close behavior will continue:\n{exception}");
+                }
+
+                return true;
+            }
+        }
+
+        [HarmonyPatch(typeof(PlayerCamera), "HandleCursorIcon")]
+        private static class HandleCursorIconPatch
+        {
+            private static void Prefix(ref int ___cursor)
+            {
+                try
+                {
+                    if (CraftingTreeHud.Active?.TryGetForegroundCursor(out int cursor) == true)
+                    {
+                        ___cursor = cursor;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    EmiPlugin.Log?.LogError(
+                        $"[EMI] PlayerCamera.HandleCursorIcon prefix failed; " +
+                        $"the original cursor will continue:\n{exception}");
                 }
             }
         }

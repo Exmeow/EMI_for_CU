@@ -57,6 +57,10 @@ namespace EMI
 
         public bool IsCycleBoundary { get; internal set; }
 
+        public bool IsCandidateLocked { get; internal set; }
+
+        public bool IsRecipeLocked { get; internal set; }
+
         public bool IsRoot => Parent == null;
 
         public bool IsQualityRequirement => Requirement != null && !Requirement.specific;
@@ -304,6 +308,7 @@ namespace EMI
         public void SelectCandidate(CraftingTreeNode node, ResourceCandidate candidate)
         {
             if (Root == null || node == null || candidate == null ||
+                node.IsCandidateLocked ||
                 !QualityRequirementKey.TryCreate(node.Requirement, out QualityRequirementKey key))
             {
                 return;
@@ -320,7 +325,7 @@ namespace EMI
 
         public void ClearCandidate(CraftingTreeNode node)
         {
-            if (node == null ||
+            if (node == null || node.IsCandidateLocked ||
                 !QualityRequirementKey.TryCreate(node.Requirement, out QualityRequirementKey key))
             {
                 return;
@@ -332,7 +337,7 @@ namespace EMI
 
         public void SelectRecipe(CraftingTreeNode node, Recipe recipe)
         {
-            if (node?.Resource == null || recipe?.result == null)
+            if (node?.Resource == null || recipe?.result == null || node.IsRecipeLocked)
             {
                 return;
             }
@@ -350,7 +355,7 @@ namespace EMI
 
         public void StopExpansion(CraftingTreeNode node)
         {
-            if (node?.Resource == null || node.IsRoot)
+            if (node?.Resource == null || node.IsRoot || node.IsRecipeLocked)
             {
                 return;
             }
@@ -432,6 +437,8 @@ namespace EMI
         private static void ResetDerivedFlags(CraftingTreeNode node)
         {
             node.IsCycleBoundary = false;
+            node.IsCandidateLocked = false;
+            node.IsRecipeLocked = false;
             foreach (CraftingTreeNode child in node.Children)
             {
                 ResetDerivedFlags(child);
@@ -442,7 +449,16 @@ namespace EMI
         {
             if (QualityRequirementKey.TryCreate(node.Requirement, out QualityRequirementKey qualityKey))
             {
-                _selectedCandidates.TryGetValue(qualityKey, out ResourceCandidate selectedCandidate);
+                ResourceCandidate selectedCandidate;
+                if (PreferenceStore.TryGetQualityCandidate(node.Requirement, out selectedCandidate))
+                {
+                    node.IsCandidateLocked = true;
+                }
+                else
+                {
+                    _selectedCandidates.TryGetValue(qualityKey, out selectedCandidate);
+                }
+
                 if (!CandidatesMatch(node.SelectedCandidate, selectedCandidate))
                 {
                     node.SelectCandidate(selectedCandidate);
@@ -456,8 +472,9 @@ namespace EMI
                 if (ancestors.Contains(resource))
                 {
                     node.IsCycleBoundary = true;
-                    if (_selectedRecipes.TryGetValue(resource, out Recipe cycleRecipe) &&
-                        RecipeCatalog.IsProducerCompatible(cycleRecipe, node.Requirement))
+                    Recipe cycleRecipe = GetEffectiveRecipe(node, resource, out bool cycleLocked);
+                    node.IsRecipeLocked = cycleLocked;
+                    if (cycleRecipe != null)
                     {
                         node.SetRecipe(cycleRecipe, false);
                     }
@@ -471,20 +488,15 @@ namespace EMI
 
                 if (!node.IsRoot)
                 {
-                    if (_selectedRecipes.TryGetValue(resource, out Recipe selectedRecipe))
+                    Recipe selectedRecipe = GetEffectiveRecipe(node, resource, out bool recipeLocked);
+                    node.IsRecipeLocked = recipeLocked;
+                    if (selectedRecipe != null)
                     {
-                        if (!RecipeCatalog.IsProducerCompatible(selectedRecipe, node.Requirement))
+                        bool needsChildren = selectedRecipe.items != null && selectedRecipe.items.Count > 0;
+                        if (node.SelectedRecipe != selectedRecipe ||
+                            (needsChildren && node.Children.Count == 0))
                         {
-                            node.SetRecipe(null, false);
-                        }
-                        else
-                        {
-                            bool needsChildren = selectedRecipe.items != null && selectedRecipe.items.Count > 0;
-                            if (node.SelectedRecipe != selectedRecipe ||
-                                (needsChildren && node.Children.Count == 0))
-                            {
-                                node.SetRecipe(selectedRecipe, true);
-                            }
+                            node.SetRecipe(selectedRecipe, true);
                         }
                     }
                     else if (node.SelectedRecipe != null)
@@ -506,6 +518,36 @@ namespace EMI
             {
                 ancestors.Remove(node.Resource.Value);
             }
+        }
+
+        private Recipe GetEffectiveRecipe(
+            CraftingTreeNode node,
+            ResourceKey resource,
+            out bool locked)
+        {
+            locked = false;
+
+            if (Root?.Resource != null && Root.Resource.Value == resource &&
+                _selectedRecipes.TryGetValue(resource, out Recipe rootRecipe) &&
+                RecipeCatalog.IsProducerCompatible(rootRecipe, node.Requirement))
+            {
+                return rootRecipe;
+            }
+
+            Recipe preferred = PreferenceStore.GetRecipeDefault(resource);
+            if (preferred != null && RecipeCatalog.IsProducerCompatible(preferred, node.Requirement))
+            {
+                locked = true;
+                return preferred;
+            }
+
+            if (_selectedRecipes.TryGetValue(resource, out Recipe selected) &&
+                RecipeCatalog.IsProducerCompatible(selected, node.Requirement))
+            {
+                return selected;
+            }
+
+            return null;
         }
 
         private static bool CandidatesMatch(ResourceCandidate left, ResourceCandidate right)

@@ -12,7 +12,7 @@ namespace EMI
     {
         public const string PluginGuid = "exmeow.casualtiesunknown.emi";
         public const string PluginName = "EMI";
-        public const string PluginVersion = "0.5.1";
+        public const string PluginVersion = "0.6.3";
 
         internal static ManualLogSource Log { get; private set; }
 
@@ -23,6 +23,8 @@ namespace EMI
         {
             Log = Logger;
             Logger.LogInfo($"[EMI] Awake entered. Version={PluginVersion}, Unity={Application.unityVersion}, Assembly={GetType().Assembly.Location}");
+
+            PreferenceStore.Initialize();
 
             gameObject.hideFlags = HideFlags.HideAndDontSave;
             UnityEngine.Object.DontDestroyOnLoad(gameObject);
@@ -37,11 +39,15 @@ namespace EMI
                 var pinRecipe = AccessTools.Method(typeof(PlayerCamera), nameof(PlayerCamera.PinRecipe));
                 var playerLateUpdate = AccessTools.Method(typeof(PlayerCamera), "LateUpdate");
                 var refreshRecipeList = AccessTools.Method(typeof(PlayerCamera), nameof(PlayerCamera.RefreshRecipeList));
+                var openCraftScreen = AccessTools.Method(typeof(PlayerCamera), nameof(PlayerCamera.OpenCraftScreen));
+                var handleCursorIcon = AccessTools.Method(typeof(PlayerCamera), "HandleCursorIcon");
                 Logger.LogInfo(
                     $"[EMI] Patch targets: PlayerCamera.Start={playerStart != null}, " +
                     $"Recipes.SetUpRecipes={recipesSetup != null}, PlayerCamera.PinRecipe={pinRecipe != null}, " +
                     $"PlayerCamera.LateUpdate={playerLateUpdate != null}, " +
-                    $"PlayerCamera.RefreshRecipeList={refreshRecipeList != null}");
+                    $"PlayerCamera.RefreshRecipeList={refreshRecipeList != null}, " +
+                    $"PlayerCamera.OpenCraftScreen={openCraftScreen != null}, " +
+                    $"PlayerCamera.HandleCursorIcon={handleCursorIcon != null}");
 
                 _harmony = new Harmony(PluginGuid);
                 _harmony.PatchAll(GetType().Assembly);
@@ -51,6 +57,8 @@ namespace EMI
                 LogPatchState("PlayerCamera.PinRecipe", pinRecipe);
                 LogPatchState("PlayerCamera.LateUpdate", playerLateUpdate);
                 LogPatchState("PlayerCamera.RefreshRecipeList", refreshRecipeList);
+                LogPatchState("PlayerCamera.OpenCraftScreen", openCraftScreen);
+                LogPatchState("PlayerCamera.HandleCursorIcon", handleCursorIcon);
                 Logger.LogInfo("[EMI] Initialization and Harmony patching completed.");
             }
             catch (Exception exception)
