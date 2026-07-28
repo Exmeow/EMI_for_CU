@@ -26,6 +26,7 @@ namespace EMI
 
             ingredients.Sort(StringComparer.Ordinal);
 
+            // Recipe indexes and localized text are not stable across sessions or game updates.
             RecipeResult result = recipe.result;
             StringBuilder canonical = new StringBuilder();
             canonical.Append("v1|result|")

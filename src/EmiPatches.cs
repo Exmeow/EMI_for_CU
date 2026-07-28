@@ -10,16 +10,8 @@ namespace EMI
         [HarmonyPatch(typeof(Recipes), nameof(Recipes.SetUpRecipes))]
         private static class RecipesSetUpPatch
         {
-            private static void Prefix()
-            {
-                EmiPlugin.Log?.LogInfo("[EMI] Recipes.SetUpRecipes prefix entered.");
-            }
-
             private static void Postfix()
             {
-                EmiPlugin.Log?.LogInfo(
-                    $"[EMI] Recipes.SetUpRecipes postfix entered. RecipeCount={Recipes.recipes?.Count ?? -1}");
-
                 try
                 {
                     RecipeCatalog.Rebuild();
@@ -37,20 +29,8 @@ namespace EMI
         [HarmonyPatch(typeof(PlayerCamera), "Start")]
         private static class PlayerCameraStartPatch
         {
-            private static void Prefix(PlayerCamera __instance)
-            {
-                EmiPlugin.Log?.LogInfo(
-                    $"[EMI] PlayerCamera.Start prefix entered. InstancePresent={__instance != null}");
-            }
-
             private static void Postfix(PlayerCamera __instance)
             {
-                EmiPlugin.Log?.LogInfo(
-                    $"[EMI] PlayerCamera.Start postfix entered. InstancePresent={__instance != null}, " +
-                    $"CraftingPanelPresent={__instance != null && __instance.craftingPanel != null}, " +
-                    $"PinTextPresent={__instance != null && __instance.pinRecipeText != null}, " +
-                    $"CatalogReady={RecipeCatalog.IsReady}");
-
                 try
                 {
                     if (!RecipeCatalog.IsReady)
@@ -78,10 +58,6 @@ namespace EMI
         {
             private static void Postfix(PlayerCamera __instance)
             {
-                EmiPlugin.Log?.LogInfo(
-                    $"[EMI] PlayerCamera.PinRecipe postfix entered. PinnedRecipe={__instance?.pinnedRecipe?.ToString() ?? "none"}, " +
-                    $"HudPresent={CraftingTreeHud.Active != null}");
-
                 try
                 {
                     CraftingTreeHud.Active?.HandlePinnedRecipeChanged(__instance);
@@ -96,6 +72,8 @@ namespace EMI
         [HarmonyPatch(typeof(PlayerCamera), "LateUpdate")]
         private static class PlayerCameraLateUpdatePatch
         {
+            private static bool _failureLogged;
+
             private static void Postfix(PlayerCamera __instance)
             {
                 try
@@ -104,7 +82,12 @@ namespace EMI
                 }
                 catch (Exception exception)
                 {
-                    EmiPlugin.Log?.LogError($"[EMI] PlayerCamera.LateUpdate postfix failed:\n{exception}");
+                    if (!_failureLogged)
+                    {
+                        _failureLogged = true;
+                        EmiPlugin.Log?.LogError(
+                            $"[EMI] PlayerCamera.LateUpdate postfix failed:\n{exception}");
+                    }
                 }
             }
         }
@@ -116,6 +99,7 @@ namespace EMI
             {
                 try
                 {
+                    // The game processes this close action before the resource click callback.
                     KeyCode interaction = KeyBinds.GetBind("iteminteract");
                     bool mouseInteraction = interaction >= KeyCode.Mouse0 &&
                                             interaction <= KeyCode.Mouse6 &&
@@ -140,6 +124,8 @@ namespace EMI
         [HarmonyPatch(typeof(PlayerCamera), "HandleCursorIcon")]
         private static class HandleCursorIconPatch
         {
+            private static bool _failureLogged;
+
             private static void Prefix(ref int ___cursor)
             {
                 try
@@ -151,9 +137,13 @@ namespace EMI
                 }
                 catch (Exception exception)
                 {
-                    EmiPlugin.Log?.LogError(
-                        $"[EMI] PlayerCamera.HandleCursorIcon prefix failed; " +
-                        $"the original cursor will continue:\n{exception}");
+                    if (!_failureLogged)
+                    {
+                        _failureLogged = true;
+                        EmiPlugin.Log?.LogError(
+                            $"[EMI] PlayerCamera.HandleCursorIcon prefix failed; " +
+                            $"the original cursor will continue:\n{exception}");
+                    }
                 }
             }
         }

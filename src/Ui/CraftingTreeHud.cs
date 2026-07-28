@@ -47,6 +47,11 @@ namespace EMI
         private readonly List<RecipeRowBinding> _recipeRows = new List<RecipeRowBinding>();
         private readonly HashSet<int> _readyTreeRecipes = new HashSet<int>();
         private readonly HashSet<int> _readyLeafRecipes = new HashSet<int>();
+        // Reused by the half-second inventory refresh to avoid per-refresh allocations.
+        private readonly HashSet<int> _nextReadyTreeRecipes = new HashSet<int>();
+        private readonly HashSet<int> _nextReadyLeafRecipes = new HashSet<int>();
+        private readonly Dictionary<Recipe, bool> _recipeAvailability =
+            new Dictionary<Recipe, bool>();
 
         private PlayerCamera _player;
         private TMP_FontAsset _font;
@@ -65,7 +70,6 @@ namespace EMI
         private TextMeshProUGUI _compendiumTabText;
         private CompendiumPanel _compendium;
         private HudPage _page;
-        private bool _initialized;
         private float _nextRemainingRefreshTime;
         private string _remainingText = string.Empty;
         private bool _remainingCalculationFailed;
@@ -74,88 +78,46 @@ namespace EMI
 
         public static void Attach(PlayerCamera player)
         {
-            EmiPlugin.Log?.LogInfo(
-                $"[EMI] HUD Attach entered. PlayerPresent={player != null}, " +
-                $"CraftingPanelPresent={player != null && player.craftingPanel != null}, ActiveHudPresent={Active != null}");
-
             if (player == null || player.craftingPanel == null)
             {
                 EmiPlugin.Log?.LogError("[EMI] HUD Attach stopped because PlayerCamera or craftingPanel is null.");
                 return;
             }
 
-            RectTransform panelRect = player.craftingPanel.transform as RectTransform;
-            EmiPlugin.Log?.LogInfo(
-                $"[EMI] Crafting panel state: Name={player.craftingPanel.name}, " +
-                $"ActiveSelf={player.craftingPanel.activeSelf}, ActiveInHierarchy={player.craftingPanel.activeInHierarchy}, " +
-                $"RectSize={(panelRect != null ? panelRect.rect.size.ToString() : "not-a-RectTransform")}");
-
             if (Active != null)
             {
                 if (Active._player == player)
                 {
-                    EmiPlugin.Log?.LogWarning("[EMI] HUD Attach skipped because this PlayerCamera already has an EMI HUD.");
                     return;
                 }
 
-                EmiPlugin.Log?.LogInfo("[EMI] Destroying HUD attached to an older PlayerCamera instance.");
                 Destroy(Active.gameObject);
             }
 
-            EmiPlugin.Log?.LogInfo("[EMI] Creating HUD host RectTransform.");
             RectTransform host = UiFactory.CreateRect("EMI", player.craftingPanel.transform);
             UiFactory.Stretch(host);
-            EmiPlugin.Log?.LogInfo(
-                $"[EMI] HUD host created. SiblingIndex={host.GetSiblingIndex()}, " +
-                $"ActiveSelf={host.gameObject.activeSelf}, ActiveInHierarchy={host.gameObject.activeInHierarchy}");
             CraftingTreeHud hud = host.gameObject.AddComponent<CraftingTreeHud>();
             hud.Initialize(player);
         }
 
         private void Initialize(PlayerCamera player)
         {
-            EmiPlugin.Log?.LogInfo("[EMI] HUD Initialize entered.");
             Active = this;
             _player = player;
             _font = player.pinRecipeText != null
                 ? player.pinRecipeText.font
                 : player.craftingPanel.GetComponentInChildren<TextMeshProUGUI>(true)?.font;
-            EmiPlugin.Log?.LogInfo($"[EMI] HUD font resolved. FontPresent={_font != null}");
 
             if (player.pinRecipeText != null)
             {
                 player.pinRecipeText.enabled = true;
-                EmiPlugin.Log?.LogInfo("[EMI] Original pinRecipeText renderer reserved for remaining materials.");
             }
 
-            EmiPlugin.Log?.LogInfo("[EMI] Creating HUD interface objects.");
             CreateInterface();
-            EmiPlugin.Log?.LogInfo("[EMI] HUD interface objects created.");
             PreferenceStore.Changed += HandlePreferencesChanged;
             HandlePinnedRecipeChanged(player);
             SetPage(HudPage.Normal, false);
-            _initialized = true;
-            LogVisibility("after-initialize");
-            EmiPlugin.Log?.LogInfo("[EMI] Crafting tree UI attached to PlayerCamera.");
-        }
-
-        private void OnEnable()
-        {
-            if (_initialized)
-            {
-                LogVisibility("on-enable");
-            }
-        }
-
-        private void LogVisibility(string stage)
-        {
-            EmiPlugin.Log?.LogInfo(
-                $"[EMI] HUD visibility ({stage}): ActiveSelf={gameObject.activeSelf}, " +
-                $"ActiveInHierarchy={gameObject.activeInHierarchy}, ChildCount={transform.childCount}, " +
-                $"TreeOverlayActive={_treeOverlay != null && _treeOverlay.gameObject.activeSelf}, " +
-                $"CompendiumActive={_compendium != null && _compendium.IsVisible}, " +
-                $"NormalTabActive={_normalTabImage != null && _normalTabImage.gameObject.activeInHierarchy}, " +
-                $"TreeTabActive={_treeTabImage != null && _treeTabImage.gameObject.activeInHierarchy}");
+            EmiPlugin.Log?.LogInfo("[EMI] HUD attached.");
         }
 
         private void OnDestroy()
@@ -633,36 +595,37 @@ namespace EMI
 
         private void UpdateReadyRecipes(CraftingPlanResult plan)
         {
-            HashSet<int> readyTreeRecipes = new HashSet<int>();
-            HashSet<int> readyLeafRecipes = new HashSet<int>();
-            Dictionary<Recipe, bool> availability = new Dictionary<Recipe, bool>();
+            _nextReadyTreeRecipes.Clear();
+            _nextReadyLeafRecipes.Clear();
+            _recipeAvailability.Clear();
 
             foreach (Recipe recipe in plan.RequiredRecipes)
             {
-                if (IsRecipeReady(recipe, availability))
+                if (IsRecipeReady(recipe, _recipeAvailability))
                 {
-                    readyTreeRecipes.Add(recipe.index);
+                    _nextReadyTreeRecipes.Add(recipe.index);
                 }
             }
 
             foreach (Recipe recipe in plan.LeafProducerRecipes)
             {
-                if (!readyTreeRecipes.Contains(recipe.index) && IsRecipeReady(recipe, availability))
+                if (!_nextReadyTreeRecipes.Contains(recipe.index) &&
+                    IsRecipeReady(recipe, _recipeAvailability))
                 {
-                    readyLeafRecipes.Add(recipe.index);
+                    _nextReadyLeafRecipes.Add(recipe.index);
                 }
             }
 
-            if (_readyTreeRecipes.SetEquals(readyTreeRecipes) &&
-                _readyLeafRecipes.SetEquals(readyLeafRecipes))
+            if (_readyTreeRecipes.SetEquals(_nextReadyTreeRecipes) &&
+                _readyLeafRecipes.SetEquals(_nextReadyLeafRecipes))
             {
                 return;
             }
 
             _readyTreeRecipes.Clear();
-            _readyTreeRecipes.UnionWith(readyTreeRecipes);
+            _readyTreeRecipes.UnionWith(_nextReadyTreeRecipes);
             _readyLeafRecipes.Clear();
-            _readyLeafRecipes.UnionWith(readyLeafRecipes);
+            _readyLeafRecipes.UnionWith(_nextReadyLeafRecipes);
             ApplyRecipeListHighlights();
         }
 
@@ -780,6 +743,7 @@ namespace EMI
             IEnumerable<Recipe> requiredRecipes,
             int currentInt)
         {
+            // RequiredRecipes contains only producers still needed after inventory allocation.
             int requiredInt = currentInt;
             foreach (Recipe recipe in requiredRecipes)
             {
@@ -1307,7 +1271,7 @@ namespace EMI
             if (node.IsRoot)
             {
                 parts.Add(EmiText.Root);
-                parts.Add("INT " + node.SelectedRecipe.INT.ToString(CultureInfo.InvariantCulture));
+                parts.Add(EmiText.FormatIntLevel(node.SelectedRecipe.INT));
             }
             else if (node.Requirement != null)
             {
@@ -1389,7 +1353,7 @@ namespace EMI
             string output = recipe.result.isLiquid
                 ? recipe.result.resultCondition.ToString("0.#", CultureInfo.InvariantCulture) + "mL"
                 : "x" + recipe.result.amount.ToString(CultureInfo.InvariantCulture);
-            return "INT " + recipe.INT.ToString(CultureInfo.InvariantCulture) +
+            return EmiText.FormatIntLevel(recipe.INT) +
                    " | " + output +
                    " | " + recipe.items.Count.ToString(CultureInfo.InvariantCulture) + " " + EmiText.Items;
         }

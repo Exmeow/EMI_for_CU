@@ -189,20 +189,31 @@ namespace EMI
                 : amount.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " quality per mL";
         }
 
+        public static string FormatIntLevel(int intelligence)
+        {
+            string value = intelligence.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+            return IsChinese
+                ? "智力 " + value
+                : "INT " + value;
+        }
+
         public static string FormatCraftingIntWarning(int requiredInt, bool impossible)
         {
+            string value = requiredInt.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
             if (IsChinese)
             {
                 return (impossible
                     ? "当前制作无法完成"
                     : "当前制作可能产生失误") +
-                    "（需要智力等级 " + requiredInt + "）";
+                    "（需要智力等级 " + value + "）";
             }
 
             return (impossible
                 ? "The current crafting plan cannot be completed"
                 : "The current crafting plan may fail") +
-                " (requires INT level " + requiredInt + ")";
+                " (requires INT level " + value + ")";
         }
     }
 }

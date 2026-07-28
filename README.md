@@ -2,6 +2,8 @@
 
 EMI is a BepInEx 5 crafting-tree HUD for Casualties: Unknown.
 
+Current release: `1.0.0`.
+
 ## Build
 
 ```powershell
@@ -9,7 +11,7 @@ dotnet build .\EMI.csproj -c Release
 ```
 
 The plugin is written to `bin\Release\EMI.dll`. Copy that file to
-`BepInEx\plugins\EMI\EMI.dll` to test it in game.
+`BepInEx\plugins\EMI.dll` to test it in game.
 
 The project references the game and BepInEx assemblies in the parent game
 directory. It should therefore be built from its current `CraftingTree`
@@ -37,6 +39,8 @@ location.
 - Supports concrete ingredients, quality alternatives, and repair-cycle
   boundaries.
 - Uses the original pinned-recipe text area to show remaining leaf materials.
+- Warns when the remaining crafting steps exceed the player's current INT,
+  using the runtime recipe requirements modified by learned blueprints.
 - Merges matching remaining quality requirements across different parent
   recipes, even when their internal excluded-item IDs differ.
 - Covers shallower tree nodes from inventory first, recalculates partially

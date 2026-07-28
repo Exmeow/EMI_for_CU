@@ -24,6 +24,7 @@ namespace EMI
 
         private readonly List<ResourceCell> _resourceCells = new List<ResourceCell>();
         private readonly List<GameObject> _bodyObjects = new List<GameObject>();
+        // Each refresh recreates its ScrollRect, so positions are keyed by logical view.
         private readonly Dictionary<string, float> _scrollPositions =
             new Dictionary<string, float>();
 
@@ -45,6 +46,8 @@ namespace EMI
         private bool _showConsumers;
         private string _selectedQuality;
         private string _searchTerm = string.Empty;
+        // Keeping the hidden grid avoids recreating hundreds of icon cells on every tab switch.
+        private bool _needsRender = true;
 
         public static CompendiumPanel Create(
             Transform parent,
@@ -73,8 +76,14 @@ namespace EMI
                 return;
             }
 
+            bool wasVisible = _root.gameObject.activeSelf;
+            if (wasVisible == visible)
+            {
+                return;
+            }
+
             _root.gameObject.SetActive(visible);
-            if (visible)
+            if (visible && _needsRender)
             {
                 RenderCurrentPage();
             }
@@ -85,6 +94,7 @@ namespace EMI
             _selectedResource = null;
             _selectedQuality = null;
             _resourceCells.Clear();
+            _needsRender = true;
             if (IsVisible)
             {
                 RenderCurrentPage();
@@ -93,9 +103,13 @@ namespace EMI
 
         public void HandlePreferencesChanged()
         {
-            if (IsVisible && (_selectedResource.HasValue || !string.IsNullOrEmpty(_selectedQuality)))
+            if (_selectedResource.HasValue || !string.IsNullOrEmpty(_selectedQuality))
             {
-                RenderCurrentPage();
+                _needsRender = true;
+                if (IsVisible)
+                {
+                    RenderCurrentPage();
+                }
             }
         }
 
@@ -196,7 +210,11 @@ namespace EMI
             _page = page;
             _selectedResource = null;
             _selectedQuality = null;
-            RenderCurrentPage();
+            _needsRender = true;
+            if (IsVisible)
+            {
+                RenderCurrentPage();
+            }
             PlayClick();
         }
 
@@ -224,6 +242,8 @@ namespace EMI
             {
                 RenderQualityList();
             }
+
+            _needsRender = false;
         }
 
         private void UpdateTabs()
@@ -784,7 +804,7 @@ namespace EMI
             string output = recipe.result.isLiquid
                 ? recipe.result.resultCondition.ToString("0.#", CultureInfo.InvariantCulture) + "mL"
                 : "x" + recipe.result.amount.ToString(CultureInfo.InvariantCulture);
-            return "INT " + recipe.INT.ToString(CultureInfo.InvariantCulture) +
+            return EmiText.FormatIntLevel(recipe.INT) +
                    " | " + output +
                    " | " + recipe.items.Count.ToString(CultureInfo.InvariantCulture) +
                    " " + EmiText.Items;

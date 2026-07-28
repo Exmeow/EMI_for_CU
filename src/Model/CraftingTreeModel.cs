@@ -527,6 +527,7 @@ namespace EMI
         {
             locked = false;
 
+            // Root pinning wins, then persisted catalog defaults, then transient tree choices.
             if (Root?.Resource != null && Root.Resource.Value == resource &&
                 _selectedRecipes.TryGetValue(resource, out Recipe rootRecipe) &&
                 RecipeCatalog.IsProducerCompatible(rootRecipe, node.Requirement))

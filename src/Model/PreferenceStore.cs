@@ -272,6 +272,7 @@ namespace EMI
                 };
 
                 string json = JsonConvert.SerializeObject(document, Formatting.Indented);
+                // Replace only after a complete write so an interrupted save cannot truncate preferences.
                 File.WriteAllText(temporaryPath, json, new UTF8Encoding(false));
                 if (File.Exists(PreferencePath))
                 {
