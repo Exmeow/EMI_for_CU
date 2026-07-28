@@ -319,7 +319,19 @@ namespace EMI
                 return;
             }
 
-            _selectedCandidates[key] = candidate;
+            if (DurabilityRequirement.IsQualityTool(node.Requirement))
+            {
+                SelectCompatibleToolCandidates(
+                    Root,
+                    node.Requirement.quality.id,
+                    candidate,
+                    new HashSet<QualityRequirementKey>());
+            }
+            else
+            {
+                _selectedCandidates[key] = candidate;
+            }
+
             EvaluateBoundaries();
         }
 
@@ -432,6 +444,30 @@ namespace EMI
             }
 
             return true;
+        }
+
+        private void SelectCompatibleToolCandidates(
+            CraftingTreeNode node,
+            string qualityId,
+            ResourceCandidate candidate,
+            HashSet<QualityRequirementKey> visited)
+        {
+            if (DurabilityRequirement.IsQualityTool(node.Requirement) &&
+                string.Equals(node.Requirement.quality.id, qualityId, StringComparison.Ordinal) &&
+                QualityRequirementKey.TryCreate(
+                    node.Requirement,
+                    out QualityRequirementKey key) &&
+                visited.Add(key) &&
+                CandidateAllowedInTree(Root, key, candidate))
+            {
+                // Different thresholds have different keys; compatible groups share the tool.
+                _selectedCandidates[key] = candidate;
+            }
+
+            foreach (CraftingTreeNode child in node.Children)
+            {
+                SelectCompatibleToolCandidates(child, qualityId, candidate, visited);
+            }
         }
 
         private static void ResetDerivedFlags(CraftingTreeNode node)

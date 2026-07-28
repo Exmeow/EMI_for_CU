@@ -12,6 +12,17 @@ namespace EMI
             return requirement != null && !requirement.isLiquid && !requirement.destroyItem;
         }
 
+        public static bool IsQualityTool(RecipeItem requirement)
+        {
+            if (!AppliesTo(requirement) || requirement.specific || requirement.quality == null)
+            {
+                return false;
+            }
+
+            string qualityId = requirement.quality.id;
+            return qualityId == "cutting" || qualityId == "hammering";
+        }
+
         public static float GetConditionCost(
             RecipeItem requirement,
             List<CraftingQuality> actualQualities)

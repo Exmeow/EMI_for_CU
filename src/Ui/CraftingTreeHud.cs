@@ -783,11 +783,9 @@ namespace EMI
                     break;
 
                 default:
-                    bool isTool = requirement.quality.id == "cutting" ||
-                                  requirement.quality.id == "hammering";
                     name = EmiText.FormatQualityItem(
                         requirement.quality.LocaleName,
-                        isTool);
+                        DurabilityRequirement.IsQualityTool(requirement));
                     break;
             }
 
@@ -1233,7 +1231,7 @@ namespace EMI
                 {
                     name = EmiText.FormatQualityLiquid(node.Requirement.quality.LocaleName);
                 }
-                else if (node.Requirement.quality.id == "cutting" || node.Requirement.quality.id == "hammering")
+                else if (DurabilityRequirement.IsQualityTool(node.Requirement))
                 {
                     name = EmiText.FormatQualityItem(node.Requirement.quality.LocaleName, true);
                 }

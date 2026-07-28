@@ -78,17 +78,18 @@ namespace EMI
                 : RemainingItems <= 0;
         }
 
-        private readonly struct LeafKey : IEquatable<LeafKey>
+        private readonly struct RemainingMaterialKey : IEquatable<RemainingMaterialKey>
         {
-            public LeafKey(Demand demand)
+            public RemainingMaterialKey(Demand demand)
             {
                 RecipeItem requirement = demand.Requirement;
                 Kind = GetKind(demand);
                 Resource = demand.Template.Resource.GetValueOrDefault();
                 HasResource = demand.Template.Resource.HasValue;
-                QualityId = requirement?.quality?.id ?? string.Empty;
-                QualityAmount = requirement?.quality?.amount ?? 0f;
-                MinimumCondition = requirement?.minimumCondition ?? 0f;
+                QualityId = HasResource ? string.Empty : requirement?.quality?.id ?? string.Empty;
+                MinimumCondition = demand.IsLiquid
+                    ? 0f
+                    : requirement?.minimumCondition ?? 0f;
                 UsesDurability = demand.UsesDurability;
             }
 
@@ -100,18 +101,15 @@ namespace EMI
 
             private string QualityId { get; }
 
-            private float QualityAmount { get; }
-
             private float MinimumCondition { get; }
 
             private bool UsesDurability { get; }
 
-            public bool Equals(LeafKey other)
+            public bool Equals(RemainingMaterialKey other)
             {
                 return Kind == other.Kind &&
                        HasResource == other.HasResource &&
                        (!HasResource || Resource == other.Resource) &&
-                       QualityAmount.Equals(other.QualityAmount) &&
                        MinimumCondition.Equals(other.MinimumCondition) &&
                        UsesDurability == other.UsesDurability &&
                        string.Equals(QualityId, other.QualityId, StringComparison.Ordinal);
@@ -119,7 +117,7 @@ namespace EMI
 
             public override bool Equals(object obj)
             {
-                return obj is LeafKey other && Equals(other);
+                return obj is RemainingMaterialKey other && Equals(other);
             }
 
             public override int GetHashCode()
@@ -130,7 +128,6 @@ namespace EMI
                     hashCode = (hashCode * 397) ^ HasResource.GetHashCode();
                     hashCode = (hashCode * 397) ^ (HasResource ? Resource.GetHashCode() : 0);
                     hashCode = (hashCode * 397) ^ (QualityId != null ? QualityId.GetHashCode() : 0);
-                    hashCode = (hashCode * 397) ^ QualityAmount.GetHashCode();
                     hashCode = (hashCode * 397) ^ MinimumCondition.GetHashCode();
                     hashCode = (hashCode * 397) ^ UsesDurability.GetHashCode();
                     return hashCode;
@@ -147,7 +144,8 @@ namespace EMI
             }
 
             List<InventoryEntry> inventory = ScanAvailableItems(body);
-            Dictionary<LeafKey, int> materialIndices = new Dictionary<LeafKey, int>();
+            Dictionary<RemainingMaterialKey, int> materialIndices =
+                new Dictionary<RemainingMaterialKey, int>();
 
             if (root.SelectedRecipe != null)
             {
@@ -595,10 +593,12 @@ namespace EMI
 
         private static void AddLeaf(
             List<RemainingMaterial> materials,
-            Dictionary<LeafKey, int> materialIndices,
+            Dictionary<RemainingMaterialKey, int> materialIndices,
             Demand demand)
         {
-            LeafKey key = new LeafKey(demand);
+            // Allocation has already honored hidden thresholds. The final list groups by
+            // player-visible identity so visually identical requirements share one row.
+            RemainingMaterialKey key = new RemainingMaterialKey(demand);
             if (!materialIndices.TryGetValue(key, out int index))
             {
                 RemainingMaterial material = new RemainingMaterial
