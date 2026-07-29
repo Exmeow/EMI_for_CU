@@ -11,7 +11,7 @@ namespace EMI
     {
         public const string PluginGuid = "exmeow.casualtiesunknown.emi";
         public const string PluginName = "EMI";
-        public const string PluginVersion = "1.0.3";
+        public const string PluginVersion = "1.0.4";
 
         internal static ManualLogSource Log { get; private set; }
 

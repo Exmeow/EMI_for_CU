@@ -42,6 +42,10 @@ namespace EMI
             new Color(0.07f, 0.14f, 0.22f, 1f);
 
         private const float UpdateNoticeInset = 52f;
+        private const string EmiBrandTitle =
+            "<color=#EB7BFC>E</color>" +
+            "<color=#7BFCA2>M</color>" +
+            "<color=#7BEBFC>I</color>";
 
         private readonly CraftingTreeModel _model = new CraftingTreeModel();
         private readonly List<GameObject> _treeRows = new List<GameObject>();
@@ -52,9 +56,8 @@ namespace EMI
         // Reused by the half-second inventory refresh to avoid per-refresh allocations.
         private readonly HashSet<int> _nextReadyTreeRecipes = new HashSet<int>();
         private readonly HashSet<int> _nextReadyLeafRecipes = new HashSet<int>();
-        // Structural paths preserve collapsed branches when model nodes are recreated.
-        private readonly HashSet<string> _collapsedNodePaths =
-            new HashSet<string>(StringComparer.Ordinal);
+        // Recipe identity keeps repeated branches visually synchronized.
+        private readonly HashSet<Recipe> _collapsedRecipes = new HashSet<Recipe>();
         private readonly Dictionary<Recipe, bool> _recipeAvailability =
             new Dictionary<Recipe, bool>();
 
@@ -148,7 +151,7 @@ namespace EMI
         {
             ResourceIconProvider.Clear();
             _model.Clear();
-            _collapsedNodePaths.Clear();
+            _collapsedRecipes.Clear();
             _compendium?.HandleCatalogRebuilt();
             HandlePinnedRecipeChanged(_player);
         }
@@ -179,7 +182,7 @@ namespace EMI
 
             if (rootChanged)
             {
-                _collapsedNodePaths.Clear();
+                _collapsedRecipes.Clear();
             }
 
             if (_page == HudPage.Tree)
@@ -363,7 +366,7 @@ namespace EMI
 
             _title = UiFactory.CreateText("Title", header.transform, _font, 22f, TextAlignmentOptions.Left);
             UiFactory.Stretch(_title.rectTransform, 14f, 92f, 4f, 4f);
-            _title.text = "EMI";
+            _title.text = EmiBrandTitle;
 
             Button reset = UiFactory.CreateButton(
                 "Reset",
@@ -646,7 +649,7 @@ namespace EMI
         private void ResetTree()
         {
             _model.ResetSelections();
-            _collapsedNodePaths.Clear();
+            _collapsedRecipes.Clear();
             ClosePopup();
             RenderTree(false);
             _player.PlayUISound(PlayerCamera.UISoundType.MiniClick, 1f);
@@ -663,12 +666,14 @@ namespace EMI
             CraftingTreeNode root = _model.Root;
             bool hasRoot = root != null;
             _emptyText.gameObject.SetActive(!hasRoot);
-            _title.text = hasRoot ? "EMI | " + root.Resource.Value.DisplayName : "EMI";
+            _title.text = hasRoot
+                ? EmiBrandTitle + " | " + root.Resource.Value.DisplayName
+                : EmiBrandTitle;
 
             if (hasRoot)
             {
                 _model.EvaluateBoundaries();
-                RenderNode(root, "root");
+                RenderNode(root);
             }
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(_treeContent);
@@ -959,11 +964,11 @@ namespace EMI
             return name;
         }
 
-        private void RenderNode(CraftingTreeNode node, string nodePath)
+        private void RenderNode(CraftingTreeNode node)
         {
             bool canCollapse = node.CanShowChildren && node.Children.Count > 0;
-            bool isCollapsed = canCollapse && _collapsedNodePaths.Contains(nodePath);
-            GameObject row = CreateTreeRow(node, nodePath, canCollapse, isCollapsed);
+            bool isCollapsed = canCollapse && _collapsedRecipes.Contains(node.SelectedRecipe);
+            GameObject row = CreateTreeRow(node, canCollapse, isCollapsed);
             _treeRows.Add(row);
 
             if (!canCollapse || isCollapsed)
@@ -971,16 +976,14 @@ namespace EMI
                 return;
             }
 
-            for (int index = 0; index < node.Children.Count; index++)
+            foreach (CraftingTreeNode child in node.Children)
             {
-                CraftingTreeNode child = node.Children[index];
-                RenderNode(child, BuildChildNodePath(nodePath, child, index));
+                RenderNode(child);
             }
         }
 
         private GameObject CreateTreeRow(
             CraftingTreeNode node,
-            string nodePath,
             bool canCollapse,
             bool isCollapsed)
         {
@@ -1076,7 +1079,7 @@ namespace EMI
                     background.transform,
                     _font,
                     isCollapsed ? "+" : "-",
-                    () => ToggleNodeCollapsed(nodePath),
+                    () => ToggleRecipeCollapsed(node.SelectedRecipe),
                     out _,
                     out _);
                 UiFactory.Anchor(
@@ -1094,46 +1097,20 @@ namespace EMI
             return background.gameObject;
         }
 
-        private void ToggleNodeCollapsed(string nodePath)
+        private void ToggleRecipeCollapsed(Recipe recipe)
         {
-            if (!_collapsedNodePaths.Remove(nodePath))
+            if (recipe == null)
             {
-                _collapsedNodePaths.Add(nodePath);
+                return;
+            }
+
+            if (!_collapsedRecipes.Remove(recipe))
+            {
+                _collapsedRecipes.Add(recipe);
             }
 
             RenderTree();
             _player.PlayUISound(PlayerCamera.UISoundType.MiniClick, 1f);
-        }
-
-        private static string BuildChildNodePath(
-            string parentPath,
-            CraftingTreeNode child,
-            int childIndex)
-        {
-            RecipeItem requirement = child.Requirement;
-            string identity;
-            if (requirement == null)
-            {
-                identity = "none";
-            }
-            else if (requirement.specific)
-            {
-                identity = "specific:" + (requirement.specificId ?? string.Empty);
-            }
-            else
-            {
-                identity = "quality:" + (requirement.quality?.id ?? string.Empty) + ":" +
-                           (requirement.quality?.amount ?? 0f).ToString(
-                               "R",
-                               CultureInfo.InvariantCulture);
-            }
-
-            return parentPath + "/" + childIndex.ToString(CultureInfo.InvariantCulture) + ":" +
-                   identity + ":" + requirement?.isLiquid + ":" +
-                   requirement?.destroyItem + ":" +
-                   (requirement?.minimumCondition ?? 0f).ToString(
-                       "R",
-                       CultureInfo.InvariantCulture);
         }
 
         private Color GetTreeRowColor(CraftingTreeNode node)

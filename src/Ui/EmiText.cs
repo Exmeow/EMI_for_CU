@@ -122,11 +122,11 @@ namespace EMI
             ? "将此材料保留为叶节点，不再展开生产配方"
             : "Keep this material as a leaf and stop expanding its recipe";
         public static string CollapseDescription => IsChinese
-            ? "隐藏此节点的下游；规划计算不受影响"
-            : "Hide this node's descendants without changing the plan";
+            ? "同时隐藏所有使用同一配方的节点下游；规划计算不受影响"
+            : "Hide descendants of every node using this recipe without changing the plan";
         public static string ExpandDescription => IsChinese
-            ? "显示此节点的下游"
-            : "Show this node's descendants";
+            ? "同时显示所有使用同一配方的节点下游"
+            : "Show descendants of every node using this recipe";
         public static string OpenReleaseDescription => IsChinese
             ? "在浏览器中打开最新发布页面"
             : "Open the latest release page in a browser";

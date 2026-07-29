@@ -1,6 +1,8 @@
 # EMI for Casualties: Unknown
 
-> 适配游戏《未知伤亡》的合成树、图鉴查看的功能强大的辅助工具
+> 适配游戏《未知伤亡》的合成路径规划与物品图鉴查看工具
+
+English: [README-en.md](README-en.md)
 
 ## 简介
 
