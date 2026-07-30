@@ -3,6 +3,9 @@ using System.Collections.Generic;
 
 namespace EMI
 {
+    /// <summary>
+    /// 集中封装原版非消耗性材料的耐久规则，供树节点次数计算与虚拟库存分配共同使用。
+    /// </summary>
     internal static class DurabilityRequirement
     {
         private const float ConditionEpsilon = 0.0001f;
@@ -76,6 +79,7 @@ namespace EMI
                 return maximumUses;
             }
 
+            // 逐次扣除可精确复现原版“使用前满足最低耐久”的边界，避免浮点除法产生多算一次。
             int uses = 0;
             float remainingCondition = condition;
             while (uses < maximumUses &&

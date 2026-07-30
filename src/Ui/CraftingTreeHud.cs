@@ -9,6 +9,10 @@ using UnityEngine.UI;
 
 namespace EMI
 {
+    /// <summary>
+    /// EMI 在原版制作面板上的总控制器，负责页面生命周期和用户操作协调。
+    /// 规划算法、图鉴内容与原版配方行高亮分别委托给独立模块。
+    /// </summary>
     internal sealed class CraftingTreeHud : MonoBehaviour
     {
         private enum HudPage
@@ -17,23 +21,6 @@ namespace EMI
             Tree,
             Compendium
         }
-
-        private sealed class RecipeRowBinding
-        {
-            public Recipe Recipe;
-            public RectTransform RectTransform;
-            public Image Background;
-            public Image Overlay;
-            public Image Accent;
-            public Color OriginalBackground;
-            public int OriginalOrder;
-        }
-
-        private static readonly Color ReadyTreeRecipeColor =
-            new Color(0.34f, 0.78f, 0.46f, 1f);
-
-        private static readonly Color ReadyLeafRecipeColor =
-            new Color(0.36f, 0.68f, 0.88f, 1f);
 
         private static readonly Color ExpandableLeafColor =
             new Color(0.16f, 0.32f, 0.42f, 1f);
@@ -48,18 +35,12 @@ namespace EMI
             "<color=#7BEBFC>I</color>";
 
         private readonly CraftingTreeModel _model = new CraftingTreeModel();
+        private readonly RecipeListHighlighter _recipeHighlighter =
+            new RecipeListHighlighter();
         private readonly List<GameObject> _treeRows = new List<GameObject>();
         private readonly List<GameObject> _popupRows = new List<GameObject>();
-        private readonly List<RecipeRowBinding> _recipeRows = new List<RecipeRowBinding>();
-        private readonly HashSet<int> _readyTreeRecipes = new HashSet<int>();
-        private readonly HashSet<int> _readyLeafRecipes = new HashSet<int>();
-        // Reused by the half-second inventory refresh to avoid per-refresh allocations.
-        private readonly HashSet<int> _nextReadyTreeRecipes = new HashSet<int>();
-        private readonly HashSet<int> _nextReadyLeafRecipes = new HashSet<int>();
-        // Recipe identity keeps repeated branches visually synchronized.
+        // 以配方实例为键，使树中使用同一配方的重复分支保持相同折叠状态。
         private readonly HashSet<Recipe> _collapsedRecipes = new HashSet<Recipe>();
-        private readonly Dictionary<Recipe, bool> _recipeAvailability =
-            new Dictionary<Recipe, bool>();
 
         private PlayerCamera _player;
         private TMP_FontAsset _font;
@@ -81,6 +62,8 @@ namespace EMI
         private TextMeshProUGUI _compendiumTabText;
         private CompendiumPanel _compendium;
         private HudPage _page;
+        // 等待原版配方按钮完成一次 Canvas 和射线更新后再重排，避免视觉与点击位置错位。
+        private int _craftRefreshRequestFrame = -1;
         private float _nextRemainingRefreshTime;
         private string _remainingText = string.Empty;
         private bool _remainingCalculationFailed;
@@ -95,6 +78,7 @@ namespace EMI
                 return;
             }
 
+            // 场景切换可能创建新的 PlayerCamera；同一时刻只允许一个 HUD 订阅全局事件。
             if (Active != null)
             {
                 if (Active._player == player)
@@ -200,13 +184,31 @@ namespace EMI
                 return;
             }
 
-            if (Time.unscaledTime >= _nextRemainingRefreshTime)
+            // 合成后延迟到下一帧更新，等待原版完成按钮重建；其余时间保留半秒轮询作为世界状态兜底。
+            if (_craftRefreshRequestFrame >= 0)
+            {
+                if (Time.frameCount > _craftRefreshRequestFrame)
+                {
+                    RefreshRemainingMaterials();
+                }
+            }
+            else if (Time.unscaledTime >= _nextRemainingRefreshTime)
             {
                 RefreshRemainingMaterials();
             }
 
             player.pinRecipeText.enabled = true;
             player.pinRecipeText.text = _remainingText;
+        }
+
+        public void HandleCraftAttempt(PlayerCamera player)
+        {
+            if (player == null || player != _player)
+            {
+                return;
+            }
+
+            _craftRefreshRequestFrame = Time.frameCount;
         }
 
         public void HandleRecipeListRefreshed(
@@ -219,62 +221,7 @@ namespace EMI
                 return;
             }
 
-            _recipeRows.Clear();
-            int count = Math.Min(recipes.Count, rows.Count);
-            if (recipes.Count != rows.Count)
-            {
-                EmiPlugin.Log?.LogWarning(
-                    $"[EMI] Recipe row binding count mismatch. Recipes={recipes.Count}, Rows={rows.Count}");
-            }
-
-            for (int index = 0; index < count; index++)
-            {
-                GameObject row = rows[index];
-                if (row == null)
-                {
-                    continue;
-                }
-
-                Image background = row.GetComponent<Image>();
-                RectTransform rectTransform = row.GetComponent<RectTransform>();
-                if (background == null || rectTransform == null)
-                {
-                    continue;
-                }
-
-                Image accent = UiFactory.CreatePanel(
-                    "EMIReadyAccent",
-                    row.transform,
-                    Color.clear);
-                accent.raycastTarget = false;
-                UiFactory.Anchor(
-                    accent.rectTransform,
-                    new Vector2(0f, 0.5f),
-                    new Vector2(0f, 0.5f),
-                    new Vector2(4f, 0f),
-                    new Vector2(7f, 54f));
-
-                Image overlay = UiFactory.CreatePanel(
-                    "EMIReadyOverlay",
-                    row.transform,
-                    Color.clear);
-                overlay.raycastTarget = false;
-                UiFactory.Stretch(overlay.rectTransform);
-                overlay.transform.SetAsFirstSibling();
-
-                _recipeRows.Add(new RecipeRowBinding
-                {
-                    Recipe = recipes[index],
-                    RectTransform = rectTransform,
-                    Background = background,
-                    Overlay = overlay,
-                    Accent = accent,
-                    OriginalBackground = background.color,
-                    OriginalOrder = index
-                });
-            }
-
-            ApplyRecipeListHighlights();
+            _recipeHighlighter.Bind(recipes, rows);
         }
 
         private void CreateInterface()
@@ -620,6 +567,7 @@ namespace EMI
 
         public bool TryGetForegroundCursor(out int cursor)
         {
+            // 只要 EMI 是射线命中的最前层 UI，就阻止原版根据后方按钮显示可点击光标。
             cursor = 0;
             foreach (RaycastResult hit in UIUtil.GetEventSystemRaycastResults(null))
             {
@@ -699,6 +647,7 @@ namespace EMI
 
         private void RefreshRemainingMaterials()
         {
+            _craftRefreshRequestFrame = -1;
             _nextRemainingRefreshTime = Time.unscaledTime + 0.5f;
             if (_player == null || _player.pinRecipeText == null)
             {
@@ -709,7 +658,7 @@ namespace EMI
             if (root == null || _player.body == null)
             {
                 _remainingText = string.Empty;
-                ClearReadyRecipes();
+                _recipeHighlighter.Clear();
                 _player.pinRecipeText.text = _remainingText;
                 return;
             }
@@ -722,7 +671,7 @@ namespace EMI
                     root,
                     plan,
                     _player.body.skills.INT);
-                UpdateReadyRecipes(plan);
+                _recipeHighlighter.Update(plan);
                 _remainingCalculationFailed = false;
             }
             catch (Exception exception)
@@ -734,123 +683,11 @@ namespace EMI
                 }
 
                 _remainingText = root.SelectedRecipe.fullName + ":";
-                ClearReadyRecipes();
+                _recipeHighlighter.Clear();
             }
 
             _player.pinRecipeText.enabled = true;
             _player.pinRecipeText.text = _remainingText;
-        }
-
-        private void UpdateReadyRecipes(CraftingPlanResult plan)
-        {
-            _nextReadyTreeRecipes.Clear();
-            _nextReadyLeafRecipes.Clear();
-            _recipeAvailability.Clear();
-
-            foreach (Recipe recipe in plan.RequiredRecipes)
-            {
-                if (IsRecipeReady(recipe, _recipeAvailability))
-                {
-                    _nextReadyTreeRecipes.Add(recipe.index);
-                }
-            }
-
-            foreach (Recipe recipe in plan.LeafProducerRecipes)
-            {
-                if (!_nextReadyTreeRecipes.Contains(recipe.index) &&
-                    IsRecipeReady(recipe, _recipeAvailability))
-                {
-                    _nextReadyLeafRecipes.Add(recipe.index);
-                }
-            }
-
-            if (_readyTreeRecipes.SetEquals(_nextReadyTreeRecipes) &&
-                _readyLeafRecipes.SetEquals(_nextReadyLeafRecipes))
-            {
-                return;
-            }
-
-            _readyTreeRecipes.Clear();
-            _readyTreeRecipes.UnionWith(_nextReadyTreeRecipes);
-            _readyLeafRecipes.Clear();
-            _readyLeafRecipes.UnionWith(_nextReadyLeafRecipes);
-            ApplyRecipeListHighlights();
-        }
-
-        private static bool IsRecipeReady(
-            Recipe recipe,
-            Dictionary<Recipe, bool> availability)
-        {
-            if (recipe == null || !recipe.visible)
-            {
-                return false;
-            }
-
-            if (!availability.TryGetValue(recipe, out bool ready))
-            {
-                ready = recipe.GetItemsForRecipe() != null;
-                availability.Add(recipe, ready);
-            }
-
-            return ready;
-        }
-
-        private void ClearReadyRecipes()
-        {
-            if (_readyTreeRecipes.Count == 0 && _readyLeafRecipes.Count == 0)
-            {
-                return;
-            }
-
-            _readyTreeRecipes.Clear();
-            _readyLeafRecipes.Clear();
-            ApplyRecipeListHighlights();
-        }
-
-        private void ApplyRecipeListHighlights()
-        {
-            _recipeRows.Sort((left, right) =>
-            {
-                int priority = RecipePriority(left.Recipe).CompareTo(RecipePriority(right.Recipe));
-                return priority != 0
-                    ? priority
-                    : left.OriginalOrder.CompareTo(right.OriginalOrder);
-            });
-
-            for (int index = 0; index < _recipeRows.Count; index++)
-            {
-                RecipeRowBinding binding = _recipeRows[index];
-                if (binding.RectTransform == null || binding.Background == null ||
-                    binding.Overlay == null || binding.Accent == null)
-                {
-                    continue;
-                }
-
-                int priority = RecipePriority(binding.Recipe);
-                Color highlight = priority == 0
-                    ? ReadyTreeRecipeColor
-                    : ReadyLeafRecipeColor;
-                bool highlighted = priority < 2;
-
-                Vector2 position = binding.RectTransform.anchoredPosition;
-                position.y = -index * 64f;
-                binding.RectTransform.anchoredPosition = position;
-                binding.Background.color = binding.OriginalBackground;
-                binding.Overlay.color = highlighted
-                    ? new Color(highlight.r, highlight.g, highlight.b, 0.34f)
-                    : Color.clear;
-                binding.Accent.color = highlighted ? highlight : Color.clear;
-            }
-        }
-
-        private int RecipePriority(Recipe recipe)
-        {
-            if (recipe != null && _readyTreeRecipes.Contains(recipe.index))
-            {
-                return 0;
-            }
-
-            return recipe != null && _readyLeafRecipes.Contains(recipe.index) ? 1 : 2;
         }
 
         private static string BuildRemainingText(
@@ -891,7 +728,7 @@ namespace EMI
             IEnumerable<Recipe> requiredRecipes,
             int currentInt)
         {
-            // RequiredRecipes contains only producers still needed after inventory allocation.
+            // RequiredRecipes 只包含分配现有库存后仍需执行的配方，已完成步骤不会抬高智力警告。
             int requiredInt = currentInt;
             foreach (Recipe recipe in requiredRecipes)
             {
@@ -1225,13 +1062,9 @@ namespace EMI
                     () =>
                     {
                         _model.SelectCandidate(node, candidate);
+                        // 具体材料和生产配方是两个独立决定；选完材料后先返回树，由玩家主动选择配方。
+                        ClosePopup();
                         RenderTree();
-
-                        if (!node.IsCycleBoundary &&
-                            RecipeCatalog.GetCompatibleProducers(candidate.Resource, node.Requirement).Count > 0)
-                        {
-                            OpenRecipeChoices(node);
-                        }
                     });
             }
 

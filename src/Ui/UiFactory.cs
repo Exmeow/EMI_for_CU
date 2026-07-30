@@ -5,6 +5,9 @@ using UnityEngine.UI;
 
 namespace EMI
 {
+    /// <summary>
+    /// EMI 的运行时 UI 构造工具，统一配色、布局约定和射线设置，避免页面各自拼装不同结构。
+    /// </summary>
     internal static class UiFactory
     {
         public static readonly Color Black = new Color(0.015f, 0.018f, 0.018f, 0.98f);
@@ -103,6 +106,7 @@ namespace EMI
             Transform parent,
             out RectTransform content)
         {
+            // 线性列表和网格使用相同的 Viewport/Content 结构，确保滚动位置恢复逻辑可以复用。
             Image background = CreatePanel(name, parent, Black);
             ScrollRect scroll = background.gameObject.AddComponent<ScrollRect>();
             scroll.horizontal = false;
@@ -248,6 +252,7 @@ namespace EMI
 
         public static void BlockTooltipsBehind(GameObject target)
         {
+            // 原版 tooltip 射线会穿过没有 UITooltip 的遮罩；空提示组件用于明确截断向后查找。
             AddTooltip(target, string.Empty, string.Empty);
         }
 

@@ -6,6 +6,9 @@ using System.Text;
 
 namespace EMI
 {
+    /// <summary>
+    /// 为配方生成不依赖本地化文本和运行时序号的稳定指纹，用于跨游戏重启恢复收藏。
+    /// </summary>
     internal static class RecipeFingerprint
     {
         public static string Create(Recipe recipe)
@@ -26,7 +29,7 @@ namespace EMI
 
             ingredients.Sort(StringComparer.Ordinal);
 
-            // Recipe indexes and localized text are not stable across sessions or game updates.
+            // 配方序号和本地化文本在不同会话或游戏更新后并不稳定，因此只编码结构化配方数据。
             RecipeResult result = recipe.result;
             StringBuilder canonical = new StringBuilder();
             canonical.Append("v1|result|")

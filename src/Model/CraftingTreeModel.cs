@@ -3,6 +3,9 @@ using System.Collections.Generic;
 
 namespace EMI
 {
+    /// <summary>
+    /// 合成树中的一个需求节点。节点保存用户选择和由配方推导出的子需求，但不读取玩家库存。
+    /// </summary>
     internal sealed class CraftingTreeNode
     {
         private sealed class RequirementGroup
@@ -84,6 +87,7 @@ namespace EMI
                     return 1;
                 }
 
+                // 液体按体积计算次数；耐久工具按单件可用次数计算；普通物品按产出数量计算。
                 if (Resource.HasValue && Resource.Value.IsLiquid)
                 {
                     float outputPerCraft = SelectedRecipe.result.resultCondition *
@@ -151,6 +155,7 @@ namespace EMI
             }
 
             int childParentCraftRuns = CraftRuns;
+            // 相同需求先合并为一个节点，避免配方数据中的重复行让树和数量统计膨胀。
             foreach (RequirementGroup group in GroupRequirements(recipe.items))
             {
                 Children.Add(new CraftingTreeNode(
@@ -244,6 +249,9 @@ namespace EMI
         }
     }
 
+    /// <summary>
+    /// 管理整棵树的选择状态与重新求值。UI 只提交选择，不直接修改节点的派生锁定或边界标记。
+    /// </summary>
     internal sealed class CraftingTreeModel
     {
         private readonly Dictionary<ResourceKey, Recipe> _selectedRecipes =
@@ -383,6 +391,8 @@ namespace EMI
                 return;
             }
 
+            // 性质选择改变后，旧选择可能已不再满足新生成的同类节点。
+            // 重新应用选择并清理冲突，直到树和共享选择达到稳定状态。
             bool removedIncompatibleSelection;
             do
             {
@@ -460,7 +470,7 @@ namespace EMI
                 visited.Add(key) &&
                 CandidateAllowedInTree(Root, key, candidate))
             {
-                // Different thresholds have different keys; compatible groups share the tool.
+                // 不同强度阈值拥有不同的键；只有确实兼容的需求组才会同步使用同一工具。
                 _selectedCandidates[key] = candidate;
             }
 
@@ -505,6 +515,7 @@ namespace EMI
             if (node.Resource.HasValue)
             {
                 ResourceKey resource = node.Resource.Value;
+                // 资源再次出现在祖先路径上即为递归边界：保留该节点供展示，但不再创建下游。
                 if (ancestors.Contains(resource))
                 {
                     node.IsCycleBoundary = true;
@@ -563,7 +574,7 @@ namespace EMI
         {
             locked = false;
 
-            // Root pinning wins, then persisted catalog defaults, then transient tree choices.
+            // 根配方固定选择优先，其次是图鉴中持久化的默认配方，最后才是当前树的临时选择。
             if (Root?.Resource != null && Root.Resource.Value == resource &&
                 _selectedRecipes.TryGetValue(resource, out Recipe rootRecipe) &&
                 RecipeCatalog.IsProducerCompatible(rootRecipe, node.Requirement))

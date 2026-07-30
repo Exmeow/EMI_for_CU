@@ -2,6 +2,9 @@ using System;
 
 namespace EMI
 {
+    /// <summary>
+    /// EMI 自有文本的中英文入口。游戏本身没有稳定的语言代码时，会用原版本地化文本探测中文包。
+    /// </summary>
     internal static class EmiText
     {
         private static bool IsChinese
@@ -14,6 +17,7 @@ namespace EMI
                     return true;
                 }
 
+                // 社区语言包可能只替换原版文本而不设置标准语言代码，因此用一个稳定词条作兜底探测。
                 string probe = Locale.GetOther("craftanyitem");
                 if (string.IsNullOrEmpty(probe))
                 {

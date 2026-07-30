@@ -4,6 +4,10 @@ using System.Linq;
 
 namespace EMI
 {
+    /// <summary>
+    /// 按产物索引所有非修理配方，并集中处理“某配方能否满足某需求”的规则。
+    /// 合成树只依赖此查询接口，不直接遍历原版全局配方表。
+    /// </summary>
     internal static class RecipeCatalog
     {
         private static readonly Dictionary<ResourceKey, List<Recipe>> Producers =
@@ -13,6 +17,7 @@ namespace EMI
 
         public static void Rebuild()
         {
+            // 原版会在载入或重建数据时替换静态配方集合，因此目录不能永久缓存旧 Recipe 实例。
             Producers.Clear();
             IsReady = false;
 
@@ -91,6 +96,7 @@ namespace EMI
                 return true;
             }
 
+            // 非消耗性需求比较工具可用次数，消耗性需求只需检查产物初始耐久阈值。
             if (DurabilityRequirement.AppliesTo(requirement))
             {
                 return DurabilityRequirement.GetUsesPerCraft(
@@ -241,6 +247,7 @@ namespace EMI
             ResourceCandidate right,
             RecipeItem requirement)
         {
+            // 可继续展开的候选排在自然资源之前，名称仅用于提供稳定且本地化的次级排序。
             bool leftCraftable = GetCompatibleProducers(left.Resource, requirement).Count > 0;
             bool rightCraftable = GetCompatibleProducers(right.Resource, requirement).Count > 0;
             int craftable = rightCraftable.CompareTo(leftCraftable);

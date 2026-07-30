@@ -6,12 +6,15 @@ using UnityEngine;
 
 namespace EMI
 {
+    /// <summary>
+    /// BepInEx 插件入口，只负责全局服务初始化、Harmony 注册和退出清理。
+    /// </summary>
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
     public sealed class EmiPlugin : BaseUnityPlugin
     {
         public const string PluginGuid = "exmeow.casualtiesunknown.emi";
         public const string PluginName = "EMI";
-        public const string PluginVersion = "1.0.4";
+        public const string PluginVersion = "1.0.5";
 
         internal static ManualLogSource Log { get; private set; }
 

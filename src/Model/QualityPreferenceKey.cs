@@ -2,6 +2,9 @@ using System;
 
 namespace EMI
 {
+    /// <summary>
+    /// 持久化性质默认值的键。默认值按性质和资源类型共享，不绑定某一配方的具体强度阈值。
+    /// </summary>
     internal readonly struct QualityPreferenceKey : IEquatable<QualityPreferenceKey>
     {
         public QualityPreferenceKey(string qualityId, bool isLiquid)

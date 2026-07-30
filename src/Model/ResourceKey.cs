@@ -2,6 +2,9 @@ using System;
 
 namespace EMI
 {
+    /// <summary>
+    /// 游戏资源的稳定身份。物品和液体可能共用字符串 ID，因此 IsLiquid 必须参与相等比较。
+    /// </summary>
     internal readonly struct ResourceKey : IEquatable<ResourceKey>
     {
         public ResourceKey(string id, bool isLiquid)

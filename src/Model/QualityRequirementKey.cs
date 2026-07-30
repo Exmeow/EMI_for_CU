@@ -2,6 +2,9 @@ using System;
 
 namespace EMI
 {
+    /// <summary>
+    /// 一类完整的抽象性质需求。性质强度、耐久阈值和是否消耗都会影响候选兼容性，必须参与键值。
+    /// </summary>
     internal readonly struct QualityRequirementKey : IEquatable<QualityRequirementKey>
     {
         private QualityRequirementKey(

@@ -4,6 +4,9 @@ using System.Linq;
 
 namespace EMI
 {
+    /// <summary>
+    /// 性质图鉴中的一个可选资源，以及该资源提供的性质强度。
+    /// </summary>
     internal sealed class QualityResourceEntry
     {
         public QualityResourceEntry(ResourceKey resource, float amount)
@@ -17,6 +20,9 @@ namespace EMI
         public float Amount { get; }
     }
 
+    /// <summary>
+    /// 为图鉴预先建立资源、性质、生产配方和使用配方索引，避免 UI 渲染时反复扫描游戏数据。
+    /// </summary>
     internal static class CompendiumCatalog
     {
         private static readonly List<ResourceKey> Resources = new List<ResourceKey>();
@@ -34,6 +40,7 @@ namespace EMI
 
         public static void Rebuild()
         {
+            // 所有集合均保存本次运行时的游戏对象；原版重建注册表时必须整体清空再生成。
             Resources.Clear();
             QualityIds.Clear();
             Producers.Clear();
@@ -87,6 +94,8 @@ namespace EMI
                     }
                 }
 
+                // 抽象性质需求可能匹配许多资源，消费者索引必须通过完整兼容性规则建立。
+                // 这段扫描只在目录重建时发生，换取图鉴页面切换时的常量时间查询。
                 foreach (ResourceKey resource in Resources)
                 {
                     foreach (Recipe recipe in Recipes.recipes)

@@ -4,6 +4,9 @@ using UnityEngine;
 
 namespace EMI
 {
+    /// <summary>
+    /// 剩余材料的展示类型。具体资源与抽象性质分开记录，物品数量与液体体积也分别处理。
+    /// </summary>
     internal enum RemainingMaterialKind
     {
         ConcreteItem,
@@ -12,6 +15,9 @@ namespace EMI
         QualityLiquid
     }
 
+    /// <summary>
+    /// 一条最终无法继续展开、需要玩家实际收集的材料。
+    /// </summary>
     internal sealed class RemainingMaterial
     {
         public RemainingMaterialKind Kind { get; set; }
@@ -27,6 +33,9 @@ namespace EMI
         public bool UsesDurability => DurabilityRequirement.AppliesTo(Requirement);
     }
 
+    /// <summary>
+    /// 一次规划计算的结果：材料清单，以及用于原版配方栏高亮的配方集合。
+    /// </summary>
     internal sealed class CraftingPlanResult
     {
         public List<RemainingMaterial> RemainingMaterials { get; } =
@@ -37,6 +46,9 @@ namespace EMI
         public HashSet<Recipe> LeafProducerRecipes { get; } = new HashSet<Recipe>();
     }
 
+    /// <summary>
+    /// 在不修改游戏状态的前提下，用虚拟库存模拟整棵树的材料消耗与批量产出。
+    /// </summary>
     internal static class RemainingMaterialsCalculator
     {
         private const float AmountEpsilon = 0.0001f;
@@ -154,6 +166,8 @@ namespace EMI
                 result.RequiredRecipes.Add(root.SelectedRecipe);
             }
 
+            // 按树的层级分配库存，使已有中间产物优先满足靠近成品的需求。
+            // 未满足的需求才会展开生产配方，并把产出放回同一虚拟库存供其他分支共享。
             List<Demand> level = CreateChildDemands(root, 1);
             List<Demand> pendingLeaves = new List<Demand>();
 
@@ -164,7 +178,7 @@ namespace EMI
 
                 foreach (Demand demand in level)
                 {
-                    AllocateInventory(new List<Demand> { demand }, inventory);
+                    AllocateInventory(demand, inventory);
                     if (demand.IsSatisfied)
                     {
                         continue;
@@ -183,7 +197,7 @@ namespace EMI
                             craftRuns,
                             demand.UsesDurability,
                             template);
-                        AllocateInventory(new List<Demand> { demand }, inventory);
+                        AllocateInventory(demand, inventory);
                         AllocateInventory(pendingLeaves, inventory);
 
                         if (demand.IsSatisfied &&
@@ -326,45 +340,66 @@ namespace EMI
                 for (int i = 0; i < demands.Count; i++)
                 {
                     Demand demand = demands[i];
-                    if (demand.IsSatisfied || !CanAllocate(entry, demand))
+                    AllocateInventoryEntry(entry, demand);
+                    if (entry.Consumed)
                     {
-                        continue;
-                    }
-
-                    if (demand.IsLiquid)
-                    {
-                        if (entry.Consumed || entry.DurabilityAllocated)
-                        {
-                            continue;
-                        }
-
-                        if (AllocateLiquid(entry, demand))
-                        {
-                            entry.LiquidAllocated = true;
-                        }
-
-                        continue;
-                    }
-
-                    if (entry.Consumed || entry.LiquidAllocated ||
-                        (!demand.UsesDurability && entry.DurabilityAllocated) ||
-                        !MatchesItem(entry, demand))
-                    {
-                        continue;
-                    }
-
-                    if (demand.UsesDurability)
-                    {
-                        AllocateDurability(entry, demand);
-                    }
-                    else
-                    {
-                        demand.RemainingItems--;
-                        entry.Consumed = true;
                         break;
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// 为单个需求重新扫描库存。生产新物品后会频繁调用此重载，避免为此创建临时列表。
+        /// </summary>
+        private static void AllocateInventory(Demand demand, List<InventoryEntry> inventory)
+        {
+            foreach (InventoryEntry entry in inventory)
+            {
+                AllocateInventoryEntry(entry, demand);
+                if (demand.IsSatisfied)
+                {
+                    return;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 尝试把一个虚拟库存项分配给一个需求。
+        /// 液体可以分给多个需求，工具可以按剩余耐久重复使用，普通物品分配后便标记为已消耗。
+        /// </summary>
+        private static void AllocateInventoryEntry(InventoryEntry entry, Demand demand)
+        {
+            if (demand.IsSatisfied || !CanAllocate(entry, demand))
+            {
+                return;
+            }
+
+            if (demand.IsLiquid)
+            {
+                if (!entry.Consumed && !entry.DurabilityAllocated && AllocateLiquid(entry, demand))
+                {
+                    entry.LiquidAllocated = true;
+                }
+
+                return;
+            }
+
+            if (entry.Consumed || entry.LiquidAllocated ||
+                (!demand.UsesDurability && entry.DurabilityAllocated) ||
+                !MatchesItem(entry, demand))
+            {
+                return;
+            }
+
+            if (demand.UsesDurability)
+            {
+                AllocateDurability(entry, demand);
+                return;
+            }
+
+            demand.RemainingItems--;
+            entry.Consumed = true;
         }
 
         private static bool CanAllocate(InventoryEntry entry, Demand demand)
@@ -375,7 +410,7 @@ namespace EMI
                 return true;
             }
 
-            // A planned output cannot bootstrap its own descendants or a mutual recipe cycle.
+            // 规划产物不能反过来满足自身的下游需求，也不能用来启动互相依赖的配方环。
             for (CraftingTreeNode ancestor = demand.Template?.Parent;
                  ancestor != null;
                  ancestor = ancestor.Parent)
@@ -548,6 +583,7 @@ namespace EMI
                 }
             }
 
+            // 与原版制作范围保持一致，并通过实例 ID 去重，防止手持物同时被附近扫描重复计入。
             Collider2D[] nearby = Physics2D.OverlapCircleAll(
                 body.transform.position,
                 10f,
@@ -619,6 +655,7 @@ namespace EMI
             }
 
             int outputPerCraft = Math.Max(1, producer.result.amount);
+            // 记录产物依赖链，CanAllocate 据此阻止副产物在环中“凭空启动”自己的生产过程。
             HashSet<ResourceKey> dependencies = new HashSet<ResourceKey>();
             CollectDependencyResources(source, dependencies);
             if (producer.result.isLiquid)
@@ -693,8 +730,8 @@ namespace EMI
             Dictionary<RemainingMaterialKey, int> materialIndices,
             Demand demand)
         {
-            // Allocation has already honored hidden thresholds. The final list groups by
-            // player-visible identity so visually identical requirements share one row.
+            // 分配阶段已经处理了界面上不可见的阈值；最终清单按玩家可见身份合并，
+            // 让视觉上相同的需求共用一行，同时仍区分耐久工具与消耗品。
             RemainingMaterialKey key = new RemainingMaterialKey(demand);
             if (!materialIndices.TryGetValue(key, out int index))
             {

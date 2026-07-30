@@ -5,6 +5,9 @@ using UnityEngine.UI;
 
 namespace EMI
 {
+    /// <summary>
+    /// 把资源身份转换为原版 Sprite 与颜色，并缓存 Resources.Load 结果供树和图鉴共同使用。
+    /// </summary>
     internal static class ResourceIconProvider
     {
         private sealed class IconVisual
@@ -18,6 +21,7 @@ namespace EMI
 
         public static void Clear()
         {
+            // 原版资源注册表重建后，旧 Sprite/颜色可能不再有效。
             Cache.Clear();
         }
 

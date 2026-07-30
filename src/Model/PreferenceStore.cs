@@ -8,6 +8,9 @@ using Newtonsoft.Json;
 
 namespace EMI
 {
+    /// <summary>
+    /// 保存图鉴中的默认配方与性质选择，并把跨会话标识解析回本次运行时的游戏对象。
+    /// </summary>
     internal static class PreferenceStore
     {
         private const int CurrentSchemaVersion = 1;
@@ -42,6 +45,7 @@ namespace EMI
 
         public static void ResolveRecipes()
         {
+            // Recipe 实例只在当前游戏进程有效；载入目录后必须通过稳定指纹重新解析。
             ResolvedRecipes.Clear();
             if (!CompendiumCatalog.IsReady)
             {
@@ -272,7 +276,7 @@ namespace EMI
                 };
 
                 string json = JsonConvert.SerializeObject(document, Formatting.Indented);
-                // Replace only after a complete write so an interrupted save cannot truncate preferences.
+                // 先完整写入临时文件再替换，避免游戏或系统中断时把偏好文件截断。
                 File.WriteAllText(temporaryPath, json, new UTF8Encoding(false));
                 if (File.Exists(PreferencePath))
                 {
@@ -295,7 +299,7 @@ namespace EMI
                 }
                 catch
                 {
-                    // Preserve the original save failure as the actionable error.
+                    // 保留最初的保存异常；清理临时文件失败不是更有价值的诊断信息。
                 }
             }
         }

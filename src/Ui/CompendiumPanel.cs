@@ -8,6 +8,10 @@ using UnityEngine.UI;
 
 namespace EMI
 {
+    /// <summary>
+    /// 管理资源图鉴与性质图鉴的页面状态、搜索、收藏操作和滚动位置。
+    /// 数据查询由 CompendiumCatalog 提供，本类只负责界面呈现。
+    /// </summary>
     internal sealed class CompendiumPanel : MonoBehaviour
     {
         private enum CatalogPage
@@ -24,7 +28,7 @@ namespace EMI
 
         private readonly List<ResourceCell> _resourceCells = new List<ResourceCell>();
         private readonly List<GameObject> _bodyObjects = new List<GameObject>();
-        // Each refresh recreates its ScrollRect, so positions are keyed by logical view.
+        // 每次刷新都会重建 ScrollRect，因此按逻辑页面键保存位置，而不是保存已销毁的组件引用。
         private readonly Dictionary<string, float> _scrollPositions =
             new Dictionary<string, float>();
 
@@ -46,7 +50,7 @@ namespace EMI
         private bool _showConsumers;
         private string _selectedQuality;
         private string _searchTerm = string.Empty;
-        // Keeping the hidden grid avoids recreating hundreds of icon cells on every tab switch.
+        // 图鉴隐藏时暂不渲染，避免每次切换栏目都重建数百个资源图标。
         private bool _needsRender = true;
 
         public static CompendiumPanel Create(
@@ -230,6 +234,7 @@ namespace EMI
 
         private void RenderCurrentPage()
         {
+            // 选中资源/性质决定二级页面；清理与恢复滚动位置统一在各渲染入口处理。
             ClearBody();
             UpdateTabs();
 
@@ -398,6 +403,7 @@ namespace EMI
 
         private void ApplyResourceSearch()
         {
+            // 同时匹配当前语言名称和内部 ID，以兼容社区中文语言包与英文资源名搜索。
             string query = _searchTerm.Trim();
             foreach (ResourceCell cell in _resourceCells)
             {
@@ -739,6 +745,7 @@ namespace EMI
 
         private void ClearBody()
         {
+            // Destroy 会延迟到帧末执行，先隐藏旧对象可避免同一帧出现重叠或拦截射线。
             SaveActiveScrollPosition();
             _searchInput = null;
             _gridContent = null;
@@ -764,6 +771,7 @@ namespace EMI
             RectTransform content,
             string key)
         {
+            // 布局完成前 normalizedPosition 不可靠，必须先强制计算内容高度再恢复位置。
             LayoutRebuilder.ForceRebuildLayoutImmediate(content);
             Canvas.ForceUpdateCanvases();
 

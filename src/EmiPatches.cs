@@ -5,6 +5,10 @@ using UnityEngine;
 
 namespace EMI
 {
+    /// <summary>
+    /// 将原版游戏生命周期和输入事件转发给 EMI。
+    /// 补丁只负责接入与异常隔离，具体目录、规划和界面行为由各自模块处理。
+    /// </summary>
     internal static class EmiPatches
     {
         [HarmonyPatch(typeof(Recipes), nameof(Recipes.SetUpRecipes))]
@@ -14,9 +18,7 @@ namespace EMI
             {
                 try
                 {
-                    RecipeCatalog.Rebuild();
-                    CompendiumCatalog.Rebuild();
-                    PreferenceStore.ResolveRecipes();
+                    CatalogCoordinator.Rebuild();
                     CraftingTreeHud.Active?.HandleRecipesRebuilt();
                 }
                 catch (Exception exception)
@@ -33,17 +35,7 @@ namespace EMI
             {
                 try
                 {
-                    if (!RecipeCatalog.IsReady)
-                    {
-                        RecipeCatalog.Rebuild();
-                    }
-
-                    if (!CompendiumCatalog.IsReady)
-                    {
-                        CompendiumCatalog.Rebuild();
-                        PreferenceStore.ResolveRecipes();
-                    }
-
+                    CatalogCoordinator.EnsureReady();
                     CraftingTreeHud.Attach(__instance);
                 }
                 catch (Exception exception)
@@ -65,6 +57,22 @@ namespace EMI
                 catch (Exception exception)
                 {
                     EmiPlugin.Log?.LogError($"[EMI] PlayerCamera.PinRecipe postfix failed:\n{exception}");
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(PlayerCamera), nameof(PlayerCamera.TryCraft))]
+        private static class TryCraftPatch
+        {
+            private static void Postfix(PlayerCamera __instance)
+            {
+                try
+                {
+                    CraftingTreeHud.Active?.HandleCraftAttempt(__instance);
+                }
+                catch (Exception exception)
+                {
+                    EmiPlugin.Log?.LogError($"[EMI] PlayerCamera.TryCraft postfix failed:\n{exception}");
                 }
             }
         }
@@ -99,7 +107,7 @@ namespace EMI
             {
                 try
                 {
-                    // The game processes this close action before the resource click callback.
+                    // 原版会先处理关闭界面的按键，再把点击事件交给图鉴资源格，因此这里需要提前截获。
                     KeyCode interaction = KeyBinds.GetBind("iteminteract");
                     bool mouseInteraction = interaction >= KeyCode.Mouse0 &&
                                             interaction <= KeyCode.Mouse6 &&
@@ -151,13 +159,6 @@ namespace EMI
         [HarmonyPatch(typeof(PlayerCamera), nameof(PlayerCamera.RefreshRecipeList))]
         private static class RefreshRecipeListPatch
         {
-            private sealed class RecipeListEntry
-            {
-                public Recipe Recipe;
-                public bool Available;
-                public int OriginalOrder;
-            }
-
             private static void Prefix(
                 PlayerCamera __instance,
                 Item ___recipeItemFilter,
@@ -166,7 +167,7 @@ namespace EMI
             {
                 try
                 {
-                    __state = BuildDisplayedRecipeOrder(
+                    __state = RecipeListOrdering.Build(
                         __instance,
                         ___recipeItemFilter,
                         ___selectedRecipeCategory);
@@ -195,70 +196,6 @@ namespace EMI
                 catch (Exception exception)
                 {
                     EmiPlugin.Log?.LogError($"[EMI] PlayerCamera.RefreshRecipeList postfix failed:\n{exception}");
-                }
-            }
-
-            private static List<Recipe> BuildDisplayedRecipeOrder(
-                PlayerCamera player,
-                Item itemFilter,
-                Recipes.RecipeCategory? category)
-            {
-                List<Recipe> visibleRecipes = Recipes.GetVisibleRecipes(itemFilter);
-                List<RecipeListEntry> entries = new List<RecipeListEntry>(visibleRecipes.Count);
-                for (int index = 0; index < visibleRecipes.Count; index++)
-                {
-                    Recipe recipe = visibleRecipes[index];
-                    entries.Add(new RecipeListEntry
-                    {
-                        Recipe = recipe,
-                        Available = recipe.GetItemsForRecipe() != null,
-                        OriginalOrder = index
-                    });
-                }
-
-                entries.Sort((left, right) =>
-                {
-                    int intelligence = left.Recipe.INT.CompareTo(right.Recipe.INT);
-                    return intelligence != 0
-                        ? intelligence
-                        : left.OriginalOrder.CompareTo(right.OriginalOrder);
-                });
-
-                List<Recipe> displayed = new List<Recipe>(entries.Count);
-                AddDisplayedRecipes(displayed, entries, true, player, itemFilter, category);
-                AddDisplayedRecipes(displayed, entries, false, player, itemFilter, category);
-                return displayed;
-            }
-
-            private static void AddDisplayedRecipes(
-                List<Recipe> displayed,
-                List<RecipeListEntry> entries,
-                bool available,
-                PlayerCamera player,
-                Item itemFilter,
-                Recipes.RecipeCategory? category)
-            {
-                foreach (RecipeListEntry entry in entries)
-                {
-                    if (entry.Available != available)
-                    {
-                        continue;
-                    }
-
-                    Recipe recipe = entry.Recipe;
-                    if (category.HasValue && string.IsNullOrEmpty(player.recipeFilter) && itemFilter == null &&
-                        recipe.category != category.Value)
-                    {
-                        continue;
-                    }
-
-                    if (!string.IsNullOrEmpty(player.recipeFilter) && itemFilter == null &&
-                        recipe.simpleName.IndexOf(player.recipeFilter, StringComparison.OrdinalIgnoreCase) < 0)
-                    {
-                        continue;
-                    }
-
-                    displayed.Add(recipe);
                 }
             }
         }

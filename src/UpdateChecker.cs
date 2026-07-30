@@ -6,6 +6,9 @@ using UnityEngine.Networking;
 
 namespace EMI
 {
+    /// <summary>
+    /// 每次游戏会话最多查询一次 GitHub 最新发行版，并维护仅存在于本次会话的隐藏状态。
+    /// </summary>
     internal static class UpdateChecker
     {
         public const string LatestReleaseUrl =
@@ -31,6 +34,7 @@ namespace EMI
                 yield break;
             }
 
+            // 更新失败不影响插件功能，也不在同一会话内反复请求 GitHub。
             _checkStarted = true;
             using (UnityWebRequest request = UnityWebRequest.Get(LatestReleaseApiUrl))
             {
@@ -113,6 +117,7 @@ namespace EMI
                 normalized = normalized.Substring(1);
             }
 
+            // 只比较最多四段数字；预发行或构建元数据不参与当前版本大小判断。
             int suffix = normalized.IndexOfAny(new[] { '-', '+' });
             if (suffix >= 0)
             {
