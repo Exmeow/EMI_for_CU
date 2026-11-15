@@ -60,10 +60,11 @@ namespace EMI
             float condition,
             RecipeItem requirement,
             List<CraftingQuality> actualQualities,
-            int maximumUses)
+            int maximumUses,
+            bool destroyAtZeroCondition = true)
         {
             if (!AppliesTo(requirement) || maximumUses <= 0 ||
-                condition <= ConditionEpsilon || condition < requirement.minimumCondition)
+                !ItemConditionRules.Matches(condition, requirement, destroyAtZeroCondition))
             {
                 return 0;
             }
@@ -83,8 +84,7 @@ namespace EMI
             int uses = 0;
             float remainingCondition = condition;
             while (uses < maximumUses &&
-                   remainingCondition > ConditionEpsilon &&
-                   remainingCondition >= requirement.minimumCondition)
+                   ItemConditionRules.Matches(remainingCondition, requirement, destroyAtZeroCondition))
             {
                 uses++;
                 remainingCondition -= conditionCost;
@@ -104,18 +104,14 @@ namespace EMI
                 return 0;
             }
 
-            List<CraftingQuality> qualities = null;
-            if (Item.GlobalItems != null &&
-                Item.GlobalItems.TryGetValue(result.id, out ItemInfo itemInfo))
-            {
-                qualities = itemInfo?.qualities;
-            }
-
+            ItemInfo itemInfo = null;
+            Item.GlobalItems?.TryGetValue(result.id, out itemInfo);
             int usesPerItem = GetUseCapacity(
-                result.resultCondition,
+                ItemConditionRules.ProducedCondition(result, itemInfo),
                 requirement,
-                qualities,
-                maximumUses);
+                itemInfo?.qualities,
+                maximumUses,
+                itemInfo?.destroyAtZeroCondition ?? true);
             if (usesPerItem <= 0)
             {
                 return 0;

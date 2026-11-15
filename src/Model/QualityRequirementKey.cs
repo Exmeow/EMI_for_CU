@@ -12,13 +12,17 @@ namespace EMI
             float qualityAmount,
             bool isLiquid,
             float minimumCondition,
-            bool destroyItem)
+            bool destroyItem,
+            bool noMaxCondition,
+            string ignoredId)
         {
             QualityId = qualityId ?? string.Empty;
             QualityAmount = qualityAmount;
             IsLiquid = isLiquid;
             MinimumCondition = minimumCondition;
             DestroyItem = destroyItem;
+            NoMaxCondition = noMaxCondition;
+            IgnoredId = ignoredId ?? string.Empty;
         }
 
         public string QualityId { get; }
@@ -30,6 +34,10 @@ namespace EMI
         public float MinimumCondition { get; }
 
         public bool DestroyItem { get; }
+
+        public bool NoMaxCondition { get; }
+
+        public string IgnoredId { get; }
 
         public static bool TryCreate(RecipeItem requirement, out QualityRequirementKey key)
         {
@@ -44,7 +52,9 @@ namespace EMI
                 requirement.quality.amount,
                 requirement.isLiquid,
                 requirement.minimumCondition,
-                requirement.destroyItem);
+                requirement.destroyItem,
+                requirement.noMaxCondition,
+                requirement.ignoredId);
             return true;
         }
 
@@ -52,6 +62,8 @@ namespace EMI
         {
             return IsLiquid == other.IsLiquid &&
                    DestroyItem == other.DestroyItem &&
+                   NoMaxCondition == other.NoMaxCondition &&
+                   string.Equals(IgnoredId, other.IgnoredId, StringComparison.Ordinal) &&
                    QualityAmount.Equals(other.QualityAmount) &&
                    MinimumCondition.Equals(other.MinimumCondition) &&
                    string.Equals(QualityId, other.QualityId, StringComparison.Ordinal);
@@ -71,6 +83,8 @@ namespace EMI
                 hashCode = (hashCode * 397) ^ IsLiquid.GetHashCode();
                 hashCode = (hashCode * 397) ^ MinimumCondition.GetHashCode();
                 hashCode = (hashCode * 397) ^ DestroyItem.GetHashCode();
+                hashCode = (hashCode * 397) ^ NoMaxCondition.GetHashCode();
+                hashCode = (hashCode * 397) ^ (IgnoredId != null ? IgnoredId.GetHashCode() : 0);
                 return hashCode;
             }
         }

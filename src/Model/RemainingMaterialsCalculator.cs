@@ -44,6 +44,8 @@ namespace EMI
         public HashSet<Recipe> RequiredRecipes { get; } = new HashSet<Recipe>();
 
         public HashSet<Recipe> LeafProducerRecipes { get; } = new HashSet<Recipe>();
+
+        public List<RemainingMaterial> LiquidPreparations { get; } = new List<RemainingMaterial>();
     }
 
     /// <summary>
@@ -64,6 +66,7 @@ namespace EMI
             public string Id;
             public List<CraftingQuality> Qualities;
             public bool ContainsItems;
+            public bool DestroyAtZeroCondition;
             public bool Consumed;
             public bool DurabilityAllocated;
             public bool LiquidAllocated;
@@ -78,6 +81,8 @@ namespace EMI
             public CraftingTreeNode Template;
             public int RemainingItems;
             public float RemainingAmount;
+            public float AmountPerUse;
+            public bool RequiresLiquidPreparation;
 
             public RecipeItem Requirement => Template.Requirement;
 
@@ -92,6 +97,8 @@ namespace EMI
                 : RemainingItems <= 0;
         }
 
+        // 这里只按最终清单可见身份分组。ignoredId 和性质强度已在逐需求分配时处理，
+        // 不应拆分显示相同的剩余材料；完整约束仍保留在需求分组与 QualityRequirementKey 中。
         private readonly struct RemainingMaterialKey : IEquatable<RemainingMaterialKey>
         {
             public RemainingMaterialKey(Demand demand)
@@ -105,6 +112,7 @@ namespace EMI
                     ? 0f
                     : requirement?.minimumCondition ?? 0f;
                 UsesDurability = demand.UsesDurability;
+                NoMaxCondition = requirement?.noMaxCondition ?? false;
             }
 
             private RemainingMaterialKind Kind { get; }
@@ -119,6 +127,8 @@ namespace EMI
 
             private bool UsesDurability { get; }
 
+            private bool NoMaxCondition { get; }
+
             public bool Equals(RemainingMaterialKey other)
             {
                 return Kind == other.Kind &&
@@ -126,6 +136,7 @@ namespace EMI
                        (!HasResource || Resource == other.Resource) &&
                        MinimumCondition.Equals(other.MinimumCondition) &&
                        UsesDurability == other.UsesDurability &&
+                       NoMaxCondition == other.NoMaxCondition &&
                        string.Equals(QualityId, other.QualityId, StringComparison.Ordinal);
             }
 
@@ -144,6 +155,7 @@ namespace EMI
                     hashCode = (hashCode * 397) ^ (QualityId != null ? QualityId.GetHashCode() : 0);
                     hashCode = (hashCode * 397) ^ MinimumCondition.GetHashCode();
                     hashCode = (hashCode * 397) ^ UsesDurability.GetHashCode();
+                    hashCode = (hashCode * 397) ^ NoMaxCondition.GetHashCode();
                     return hashCode;
                 }
             }
@@ -151,13 +163,15 @@ namespace EMI
 
         public static CraftingPlanResult Calculate(CraftingTreeNode root, Body body)
         {
-            CraftingPlanResult result = new CraftingPlanResult();
-            if (root == null || body == null)
-            {
-                return result;
-            }
+            return root == null || body == null
+                ? new CraftingPlanResult()
+                : CalculateWithInventory(root, ScanAvailableItems(body));
+        }
 
-            List<InventoryEntry> inventory = ScanAvailableItems(body);
+        private static CraftingPlanResult CalculateWithInventory(
+            CraftingTreeNode root, List<InventoryEntry> inventory)
+        {
+            CraftingPlanResult result = new CraftingPlanResult();
             Dictionary<RemainingMaterialKey, int> materialIndices =
                 new Dictionary<RemainingMaterialKey, int>();
 
@@ -170,6 +184,7 @@ namespace EMI
             // 未满足的需求才会展开生产配方，并把产出放回同一虚拟库存供其他分支共享。
             List<Demand> level = CreateChildDemands(root, 1);
             List<Demand> pendingLeaves = new List<Demand>();
+            List<Demand> allDemands = new List<Demand>(level);
 
             while (level.Count > 0)
             {
@@ -190,7 +205,7 @@ namespace EMI
                         RecipeCatalog.IsProducerCompatible(producer, demand.Requirement))
                     {
                         result.RequiredRecipes.Add(producer);
-                        int craftRuns = RequiredCraftRuns(demand, producer);
+                        int craftRuns = RequiredCraftRuns(demand, producer, inventory);
                         AddPlannedOutputs(
                             inventory,
                             producer,
@@ -217,6 +232,7 @@ namespace EMI
                     pendingLeaves.Add(demand);
                 }
 
+                allDemands.AddRange(nextLevel);
                 level = nextLevel;
             }
 
@@ -227,10 +243,29 @@ namespace EMI
                     continue;
                 }
 
+                // 不足一份的余量只在最终叶节点扣抵，不能提前把半份需求当成可执行制作。
+                ReserveLiquidRemainder(demand, inventory);
+                if (demand.IsSatisfied)
+                {
+                    continue;
+                }
                 AddLeaf(result.RemainingMaterials, materialIndices, demand);
                 RegisterLeafProducers(result.LeafProducerRecipes, demand);
             }
 
+            foreach (Demand demand in allDemands)
+            {
+                if (demand.RequiresLiquidPreparation)
+                {
+                    result.LiquidPreparations.Add(new RemainingMaterial
+                    {
+                        Kind = GetKind(demand),
+                        Resource = demand.Template.Resource,
+                        Requirement = demand.Requirement,
+                        Amount = demand.AmountPerUse
+                    });
+                }
+            }
             return result;
         }
 
@@ -298,23 +333,26 @@ namespace EMI
                 float amountPerRequirement = requirement.specific
                     ? requirement.minimumCondition
                     : (template.SelectedCandidate?.RequiredLiquidAmount ?? 0f);
-                demand.RemainingAmount = amountPerRequirement * template.RequirementMultiplicity * runs;
+                demand.AmountPerUse = amountPerRequirement;
             }
             else if (requirement.quality != null)
             {
-                demand.RemainingAmount = requirement.quality.amount * template.RequirementMultiplicity * runs;
+                demand.AmountPerUse = requirement.quality.amount;
             }
 
+            demand.RemainingAmount = demand.AmountPerUse * template.RequirementMultiplicity * runs;
             return demand;
         }
 
-        private static int RequiredCraftRuns(Demand demand, Recipe producer)
+        private static int RequiredCraftRuns(Demand demand, Recipe producer, List<InventoryEntry> inventory)
         {
             if (demand.IsLiquid)
             {
                 float outputPerCraft = producer.result.resultCondition * Math.Max(1, producer.result.amount);
+                float missingAmount = Math.Max(0f, demand.RemainingAmount -
+                    AvailableLiquidContribution(demand, inventory, producer.result.id));
                 return outputPerCraft > AmountEpsilon
-                    ? Math.Max(1, (int)Math.Ceiling(demand.RemainingAmount / outputPerCraft))
+                    ? Math.Max(1, (int)Math.Ceiling(missingAmount / outputPerCraft))
                     : 1;
             }
 
@@ -347,6 +385,12 @@ namespace EMI
                     }
                 }
             }
+
+            // 先让所有需求尝试单容器份额，避免小瓶余量抢走另一分支可直接使用的库存。
+            foreach (Demand demand in demands)
+            {
+                AllocatePooledLiquid(demand, inventory);
+            }
         }
 
         /// <summary>
@@ -362,6 +406,8 @@ namespace EMI
                     return;
                 }
             }
+
+            AllocatePooledLiquid(demand, inventory);
         }
 
         /// <summary>
@@ -451,7 +497,7 @@ namespace EMI
             while (!demand.IsSatisfied && MatchesItem(entry, demand))
             {
                 demand.RemainingItems--;
-                entry.RemainingCondition = Math.Max(0f, entry.RemainingCondition - conditionCost);
+                entry.RemainingCondition = entry.RemainingCondition - conditionCost;
             }
         }
 
@@ -474,8 +520,7 @@ namespace EMI
             }
 
             float condition = entry.RemainingCondition;
-            if (condition < requirement.minimumCondition ||
-                (demand.UsesDurability && condition <= AmountEpsilon))
+            if (!ItemConditionRules.Matches(condition, requirement, entry.DestroyAtZeroCondition))
             {
                 return false;
             }
@@ -499,45 +544,164 @@ namespace EMI
 
         private static bool AllocateLiquid(InventoryEntry entry, Demand demand)
         {
-            if (entry.Liquids.Count == 0)
-            {
-                return false;
-            }
-
             bool allocated = false;
             foreach (LiquidPool pool in entry.Liquids)
             {
-                if (pool.RemainingAmount <= AmountEpsilon || demand.IsSatisfied)
+                float contribution = ContributionPerMilliliter(pool.Id, demand);
+                if (contribution <= 0f || demand.IsSatisfied || demand.AmountPerUse <= AmountEpsilon)
                 {
                     continue;
                 }
 
-                float contributionPerMilliliter = ContributionPerMilliliter(pool.Id, demand);
-                if (contributionPerMilliliter <= 0f)
+                // 一次制作必须由同一容器内的一种液体满足；批量制作允许逐份换容器。
+                int uses = (int)Math.Min(
+                    Math.Floor((pool.RemainingAmount * contribution + AmountEpsilon) / demand.AmountPerUse),
+                    Math.Floor((demand.RemainingAmount + AmountEpsilon) / demand.AmountPerUse));
+                if (uses <= 0)
                 {
                     continue;
                 }
 
-                float neededVolume = demand.RemainingAmount / contributionPerMilliliter;
-                float usedVolume = Math.Min(pool.RemainingAmount, neededVolume);
-                if (usedVolume <= AmountEpsilon)
-                {
-                    continue;
-                }
-
-                pool.RemainingAmount -= usedVolume;
-                if (pool.RemainingAmount < 0.5f)
-                {
-                    pool.RemainingAmount = 0f;
-                }
-
-                demand.RemainingAmount = Math.Max(
-                    0f,
-                    demand.RemainingAmount - usedVolume * contributionPerMilliliter);
+                float usedContribution = uses * demand.AmountPerUse;
+                ConsumeLiquidPool(pool, usedContribution / contribution);
+                demand.RemainingAmount = Math.Max(0f, demand.RemainingAmount - usedContribution);
                 allocated = true;
             }
 
             return allocated;
+        }
+
+        private static bool CanAllocateLiquid(InventoryEntry entry, Demand demand)
+        {
+            return !entry.Consumed && !entry.DurabilityAllocated && CanAllocate(entry, demand);
+        }
+
+        private static float AvailableLiquidContribution(
+            Demand demand, List<InventoryEntry> inventory, string liquidId)
+        {
+            float contribution = ContributionPerMilliliter(liquidId, demand);
+            float total = 0f;
+            foreach (InventoryEntry entry in inventory)
+            {
+                if (!CanAllocateLiquid(entry, demand))
+                {
+                    continue;
+                }
+
+                foreach (LiquidPool pool in entry.Liquids)
+                {
+                    if (pool.Id == liquidId)
+                    {
+                        total += pool.RemainingAmount * contribution;
+                    }
+                }
+            }
+
+            return total;
+        }
+
+        private static HashSet<string> GetLiquidIds(Demand demand, List<InventoryEntry> inventory)
+        {
+            HashSet<string> ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (InventoryEntry entry in inventory)
+            {
+                if (CanAllocateLiquid(entry, demand))
+                {
+                    foreach (LiquidPool pool in entry.Liquids)
+                    {
+                        if (pool.RemainingAmount > AmountEpsilon && ContributionPerMilliliter(pool.Id, demand) > 0f)
+                        {
+                            ids.Add(pool.Id);
+                        }
+                    }
+                }
+            }
+
+            return ids;
+        }
+
+        private static void AllocatePooledLiquid(Demand demand, List<InventoryEntry> inventory)
+        {
+            if (!demand.IsLiquid || demand.IsSatisfied || demand.AmountPerUse <= AmountEpsilon)
+            {
+                return;
+            }
+
+            foreach (string liquidId in GetLiquidIds(demand, inventory))
+            {
+                float total = AvailableLiquidContribution(demand, inventory, liquidId);
+                int uses = (int)Math.Min(
+                    Math.Floor((total + AmountEpsilon) / demand.AmountPerUse),
+                    Math.Floor((demand.RemainingAmount + AmountEpsilon) / demand.AmountPerUse));
+                if (uses > 0)
+                {
+                    ReserveLiquid(demand, inventory, liquidId, uses * demand.AmountPerUse);
+                    demand.RequiresLiquidPreparation = true;
+                }
+            }
+        }
+
+        private static void ReserveLiquidRemainder(Demand demand, List<InventoryEntry> inventory)
+        {
+            if (!demand.IsLiquid || demand.IsSatisfied)
+            {
+                return;
+            }
+
+            // 不同液体的性质值不能凑成一份。余量只选择贡献最多的同种液体扣抵缺口。
+            string bestId = null;
+            float best = 0f;
+            foreach (string liquidId in GetLiquidIds(demand, inventory))
+            {
+                float total = AvailableLiquidContribution(demand, inventory, liquidId);
+                if (total > best)
+                {
+                    best = total;
+                    bestId = liquidId;
+                }
+            }
+
+            if (bestId != null)
+            {
+                ReserveLiquid(demand, inventory, bestId, Math.Min(best, demand.RemainingAmount));
+                demand.RequiresLiquidPreparation = true;
+            }
+        }
+
+        private static void ReserveLiquid(
+            Demand demand, List<InventoryEntry> inventory, string liquidId, float contributionNeeded)
+        {
+            float contribution = ContributionPerMilliliter(liquidId, demand);
+            foreach (InventoryEntry entry in inventory)
+            {
+                if (!CanAllocateLiquid(entry, demand))
+                {
+                    continue;
+                }
+
+                foreach (LiquidPool pool in entry.Liquids)
+                {
+                    if (pool.Id != liquidId || contributionNeeded <= AmountEpsilon)
+                    {
+                        continue;
+                    }
+
+                    float used = Math.Min(pool.RemainingAmount * contribution, contributionNeeded);
+                    ConsumeLiquidPool(pool, used / contribution);
+                    contributionNeeded -= used;
+                    demand.RemainingAmount = Math.Max(0f, demand.RemainingAmount - used);
+                    entry.LiquidAllocated |= used > 0f;
+                }
+            }
+        }
+
+        private static void ConsumeLiquidPool(LiquidPool pool, float amount)
+        {
+            pool.RemainingAmount = Math.Max(0f, pool.RemainingAmount - amount);
+            if (pool.RemainingAmount < 0.5f)
+            {
+                pool.RemainingAmount = 0f;
+            }
         }
 
         private static float ContributionPerMilliliter(string liquidId, Demand demand)
@@ -614,6 +778,7 @@ namespace EMI
             {
                 Id = item.id,
                 Qualities = item.Stats.qualities,
+                DestroyAtZeroCondition = item.Stats.destroyAtZeroCondition,
                 RemainingCondition = item.condition
             };
 
@@ -660,48 +825,58 @@ namespace EMI
             CollectDependencyResources(source, dependencies);
             if (producer.result.isLiquid)
             {
-                float outputAmount = producer.result.resultCondition * outputPerCraft * craftRuns;
+                float outputAmount = producer.result.resultCondition;
                 if (outputAmount <= AmountEpsilon)
                 {
                     return;
                 }
 
-                InventoryEntry liquidOutput = new InventoryEntry
+                for (long index = 0; index < (long)outputPerCraft * craftRuns; index++)
                 {
-                    Id = producer.result.id,
-                    LiquidAllocated = true,
-                    PlannedBy = source,
-                    PlannedDependencies = dependencies
-                };
-                liquidOutput.Liquids.Add(new LiquidPool
-                {
-                    Id = producer.result.id,
-                    RemainingAmount = outputAmount
-                });
-                inventory.Add(liquidOutput);
+                    InventoryEntry liquidOutput = new InventoryEntry
+                    {
+                        Id = producer.result.id,
+                        LiquidAllocated = true,
+                        PlannedBy = source,
+                        PlannedDependencies = dependencies
+                    };
+                    liquidOutput.Liquids.Add(new LiquidPool
+                    {
+                        Id = producer.result.id,
+                        RemainingAmount = outputAmount
+                    });
+                    inventory.Add(liquidOutput);
+                }
                 return;
             }
 
-            List<CraftingQuality> qualities = null;
-            if (Item.GlobalItems != null &&
-                Item.GlobalItems.TryGetValue(producer.result.id, out ItemInfo itemInfo))
-            {
-                qualities = itemInfo?.qualities;
-            }
+            ItemInfo itemInfo = null;
+            Item.GlobalItems?.TryGetValue(producer.result.id, out itemInfo);
 
             long outputCount = (long)craftRuns * outputPerCraft;
             int safeOutputCount = (int)Math.Min(int.MaxValue, outputCount);
             for (int index = 0; index < safeOutputCount; index++)
             {
-                inventory.Add(new InventoryEntry
+                InventoryEntry output = new InventoryEntry
                 {
                     Id = producer.result.id,
-                    Qualities = qualities,
-                    RemainingCondition = producer.result.resultCondition,
+                    Qualities = itemInfo?.qualities,
+                    DestroyAtZeroCondition = itemInfo?.destroyAtZeroCondition ?? true,
+                    RemainingCondition = ItemConditionRules.ProducedCondition(producer.result, itemInfo),
                     DurabilityAllocated = reserveForDurability,
                     PlannedBy = source,
                     PlannedDependencies = dependencies
-                });
+                };
+                if (producer.result.dontDrainResultLiquid && itemInfo is LiquidItemInfo liquidInfo &&
+                    liquidInfo.defaultContents != null)
+                {
+                    foreach (LiquidStack stack in liquidInfo.defaultContents)
+                    {
+                        output.Liquids.Add(new LiquidPool { Id = stack.liquidId, RemainingAmount = stack.amount });
+                    }
+                }
+
+                inventory.Add(output);
             }
         }
 

@@ -12,59 +12,64 @@
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <RestoreIgnoreFailedSources>true</RestoreIgnoreFailedSources>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GameRoot Condition="'$(GameRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\..'))</GameRoot>
+    <BepInExRoot Condition="'$(BepInExRoot)' == ''">$(GameRoot)\BepInEx</BepInExRoot>
+    <GameManagedDir>$(GameRoot)\CasualtiesUnknown_Data\Managed</GameManagedDir>
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="src\**\*.cs" />
     <Reference Include="0Harmony">
-      <HintPath>..\BepInEx\core\0Harmony.dll</HintPath>
+      <HintPath>$(BepInExRoot)\core\0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="BepInEx">
-      <HintPath>..\BepInEx\core\BepInEx.dll</HintPath>
+      <HintPath>$(BepInExRoot)\core\BepInEx.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <HintPath>$(GameManagedDir)\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\Newtonsoft.Json.dll</HintPath>
+      <HintPath>$(GameManagedDir)\Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Unity.TextMeshPro">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+      <HintPath>$(GameManagedDir)\Unity.TextMeshPro.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\UnityEngine.dll</HintPath>
+      <HintPath>$(GameManagedDir)\UnityEngine.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(GameManagedDir)\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <HintPath>$(GameManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.Physics2DModule">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\UnityEngine.Physics2DModule.dll</HintPath>
+      <HintPath>$(GameManagedDir)\UnityEngine.Physics2DModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <HintPath>$(GameManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\UnityEngine.UI.dll</HintPath>
+      <HintPath>$(GameManagedDir)\UnityEngine.UI.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.UIModule">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+      <HintPath>$(GameManagedDir)\UnityEngine.UIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.UnityWebRequestModule">
-      <HintPath>..\CasualtiesUnknown_Data\Managed\UnityEngine.UnityWebRequestModule.dll</HintPath>
+      <HintPath>$(GameManagedDir)\UnityEngine.UnityWebRequestModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

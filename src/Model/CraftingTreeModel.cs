@@ -229,7 +229,9 @@ namespace EMI
             if (left.specific != right.specific ||
                 left.isLiquid != right.isLiquid ||
                 left.destroyItem != right.destroyItem ||
-                left.minimumCondition != right.minimumCondition)
+                left.minimumCondition != right.minimumCondition ||
+                left.noMaxCondition != right.noMaxCondition ||
+                !string.Equals(left.ignoredId, right.ignoredId, StringComparison.Ordinal))
             {
                 return false;
             }

@@ -70,6 +70,8 @@ namespace EMI
 
         public static CraftingTreeHud Active { get; private set; }
 
+        public bool IsCompendiumSearchFocused => _compendium != null && _compendium.IsSearchFocused;
+
         public static void Attach(PlayerCamera player)
         {
             if (player == null || player.craftingPanel == null)
@@ -705,7 +707,7 @@ namespace EMI
                 .Append(EmiText.RemainingMaterials)
                 .Append("</color>\n");
 
-            if (plan.RemainingMaterials.Count == 0)
+            if (plan.RemainingMaterials.Count == 0 && plan.LiquidPreparations.Count == 0)
             {
                 text.Append("<color=#59FF59><sprite index=23>")
                     .Append(EmiText.MaterialsReady)
@@ -720,6 +722,12 @@ namespace EMI
                     .Append("</color>\n");
             }
 
+            foreach (RemainingMaterial preparation in plan.LiquidPreparations)
+            {
+                text.Append("<color=#FFDB38>")
+                    .Append(EmiText.FormatLiquidPreparation(FormatRemainingMaterial(preparation)))
+                    .Append("</color>\n");
+            }
             return text.ToString().TrimEnd('\n');
         }
 
@@ -791,6 +799,10 @@ namespace EMI
             {
                 name += " [" + (requirement.minimumCondition * 100f)
                     .ToString("0.#", CultureInfo.InvariantCulture) + "%+]";
+            }
+            if (requirement != null && !requirement.isLiquid && requirement.noMaxCondition)
+            {
+                name += " [<99.1%]";
             }
 
             if (material.UsesDurability)

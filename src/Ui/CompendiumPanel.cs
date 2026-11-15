@@ -73,6 +73,9 @@ namespace EMI
 
         public bool IsVisible => _root != null && _root.gameObject.activeSelf;
 
+        public bool IsSearchFocused => _root != null && _root.gameObject.activeInHierarchy &&
+                                       _searchInput != null && _searchInput.isFocused;
+
         public void SetBottomInset(float bottomInset)
         {
             if (_root == null)
@@ -496,7 +499,8 @@ namespace EMI
 
             string state = recipe.isRepair
                 ? EmiText.RepairNotFavorite
-                : selected ? EmiText.Favorited : EmiText.NotFavorited;
+                : selected ? EmiText.Favorited
+                : PreferenceStore.HasUnresolvedRecipeDefault(result) ? EmiText.UnresolvedFavorite : EmiText.NotFavorited;
             TextMeshProUGUI text = UiFactory.CreateText(
                 "Text",
                 background.transform,

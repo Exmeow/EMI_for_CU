@@ -50,9 +50,10 @@ namespace EMI
         public static string NoCandidates => IsChinese ? "没有可选资源" : "NO CANDIDATES";
         public static string Favorited => IsChinese ? "已收藏" : "FAVORITED";
         public static string NotFavorited => IsChinese ? "未收藏" : "NOT FAVORITED";
+        public static string UnresolvedFavorite => IsChinese ? "需重新选择收藏" : "RESELECT FAVORITE";
         public static string RepairNotFavorite => IsChinese
-            ? "修理配方，不可收藏"
-            : "REPAIR RECIPE, CANNOT BE FAVORITED";
+            ? "不可收藏修理配方"
+            : "CANNOT FAVORITE REPAIR RECIPE";
         public static string CandidateLocked => IsChinese ? "性质选择已锁定" : "QUALITY CHOICE LOCKED";
         public static string RecipeLocked => IsChinese ? "配方已锁定" : "RECIPE LOCKED";
         public static string Reset => IsChinese ? "重置" : "RESET";
@@ -145,6 +146,12 @@ namespace EMI
                 : "! New version available: " + version;
         }
 
+        public static string FormatLiquidPreparation(string requirement)
+        {
+            return IsChinese
+                ? "请将 " + requirement + " 置于同一容器内"
+                : "Needs " + requirement + " in one container";
+        }
         public static string FormatRequiredUses(int uses)
         {
             return IsChinese

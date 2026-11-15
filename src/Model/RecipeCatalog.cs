@@ -105,7 +105,12 @@ namespace EMI
                     1) > 0;
             }
 
-            return producer.result.resultCondition >= requirement.minimumCondition;
+            ItemInfo itemInfo = null;
+            Item.GlobalItems?.TryGetValue(producer.result.id, out itemInfo);
+            return ItemConditionRules.Matches(
+                ItemConditionRules.ProducedCondition(producer.result, itemInfo),
+                requirement,
+                itemInfo?.destroyAtZeroCondition ?? true);
         }
 
         public static List<ResourceCandidate> GetCandidates(RecipeItem requirement)

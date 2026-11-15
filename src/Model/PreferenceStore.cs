@@ -52,16 +52,24 @@ namespace EMI
                 return;
             }
 
-            foreach (KeyValuePair<ResourceKey, string> preference in RecipeFingerprints)
+            // 解析只更新内存；确认迁移的指纹随下一次用户保存一起落盘。
+            foreach (KeyValuePair<ResourceKey, string> preference in RecipeFingerprints.ToArray())
             {
-                Recipe recipe = CompendiumCatalog.GetProducers(preference.Key)
-                    .FirstOrDefault(candidate =>
-                        candidate != null &&
-                        !candidate.isRepair &&
-                        string.Equals(
-                            RecipeFingerprint.Create(candidate),
-                            preference.Value,
-                            StringComparison.Ordinal));
+                IReadOnlyList<Recipe> producers = CompendiumCatalog.GetProducers(preference.Key);
+                List<Recipe> matches = producers.Where(candidate =>
+                    candidate?.result != null && !candidate.isRepair &&
+                    string.Equals(RecipeFingerprint.Create(candidate), preference.Value, StringComparison.Ordinal)).ToList();
+                Recipe recipe = matches.Count == 1 ? matches[0] : null;
+                if (matches.Count == 0)
+                {
+                    recipe = LegacyRecipeMigration.Resolve(preference.Key, preference.Value, producers);
+                    if (recipe != null)
+                    {
+                        RecipeFingerprints[preference.Key] = RecipeFingerprint.Create(recipe);
+                        EmiPlugin.Log?.LogInfo($"[EMI] Migrated confirmed Demo recipe preference: {preference.Key}");
+                    }
+                }
+
                 if (recipe != null)
                 {
                     ResolvedRecipes[preference.Key] = recipe;
@@ -69,11 +77,16 @@ namespace EMI
                 else
                 {
                     EmiPlugin.Log?.LogWarning(
-                        $"[EMI] Stored recipe preference could not be resolved: {preference.Key}");
+                        $"[EMI] Stored recipe preference is missing or ambiguous: {preference.Key}. " +
+                        "The original entry is retained; select a recipe in the catalog to replace it.");
                 }
             }
         }
 
+        public static bool HasUnresolvedRecipeDefault(ResourceKey resource)
+        {
+            return RecipeFingerprints.ContainsKey(resource) && !ResolvedRecipes.ContainsKey(resource);
+        }
         public static Recipe GetRecipeDefault(ResourceKey resource)
         {
             ResolvedRecipes.TryGetValue(resource, out Recipe recipe);

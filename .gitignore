@@ -2,6 +2,29 @@
 [Bb]in/
 [Oo]bj/
 
+# Generated plugin binaries and local artifacts
+*.dll
+*.pdb
+*.exe
+*.dll.mdb
+artifacts/
+publish/
+EMI-deploy-backups/
+*.pending
+
+# Local mod preferences and logs
+preferences.json
+preferences.json.tmp
+*.log
+
+# Local tests and scripts
+/tests/
+*.ps1
+*.psm1
+*.cmd
+*.bat
+*.sh
+
 # IDE and user-specific files
 .vs/
 .idea/

@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Reflection.Emit;
+using TMPro;
 using HarmonyLib;
 using UnityEngine;
 
@@ -100,6 +103,31 @@ namespace EMI
             }
         }
 
+        [HarmonyPatch(typeof(PlayerCamera), nameof(PlayerCamera.HandleInput))]
+        private static class HandleInputPatch
+        {
+            private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+            {
+                MethodInfo original = AccessTools.PropertyGetter(typeof(TMP_InputField), nameof(TMP_InputField.isFocused));
+                MethodInfo replacement = AccessTools.Method(typeof(EmiPatches), nameof(IsCraftingTextInputFocused));
+                foreach (CodeInstruction instruction in instructions)
+                {
+                    // 延用原版对制作键和身体界面键的焦点保护，不改变 Escape/暂停分支。
+                    if (instruction.Calls(original))
+                    {
+                        instruction.opcode = OpCodes.Call;
+                        instruction.operand = replacement;
+                    }
+
+                    yield return instruction;
+                }
+            }
+        }
+
+        internal static bool IsCraftingTextInputFocused(TMP_InputField original)
+        {
+            return original.isFocused || CraftingTreeHud.Active?.IsCompendiumSearchFocused == true;
+        }
         [HarmonyPatch(typeof(PlayerCamera), nameof(PlayerCamera.OpenCraftScreen))]
         private static class OpenCraftScreenPatch
         {
