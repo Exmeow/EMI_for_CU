@@ -1,6 +1,7 @@
 using System;
 using BepInEx;
 using BepInEx.Logging;
+using BepInEx.Bootstrap;
 using HarmonyLib;
 using UnityEngine;
 
@@ -10,11 +11,12 @@ namespace EMI
     /// BepInEx 插件入口，只负责全局服务初始化、Harmony 注册和退出清理。
     /// </summary>
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
+    [BepInDependency(QolRecipeRows.PluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
     public sealed class EmiPlugin : BaseUnityPlugin
     {
         public const string PluginGuid = "exmeow.casualtiesunknown.emi";
         public const string PluginName = "EMI";
-        public const string PluginVersion = "1.1";
+        public const string PluginVersion = "1.1.1";
 
         internal static ManualLogSource Log { get; private set; }
 
@@ -35,6 +37,11 @@ namespace EMI
             {
                 _harmony = new Harmony(PluginGuid);
                 _harmony.PatchAll(GetType().Assembly);
+                if (Chainloader.PluginInfos.TryGetValue(QolRecipeRows.PluginGuid, out PluginInfo qol) &&
+                    qol.Instance != null)
+                {
+                    QolRecipeRows.Install(_harmony, qol.Instance.GetType().Assembly);
+                }
                 StartCoroutine(UpdateChecker.CheckForUpdates());
                 Logger.LogInfo($"[EMI] {PluginName} initialized.");
             }

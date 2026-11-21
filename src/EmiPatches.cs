@@ -187,44 +187,66 @@ namespace EMI
         [HarmonyPatch(typeof(PlayerCamera), nameof(PlayerCamera.RefreshRecipeList))]
         private static class RefreshRecipeListPatch
         {
-            private static void Prefix(
+            private sealed class RefreshState
+            {
+                internal List<Recipe> VanillaOrder;
+                internal QolRecipeRows.Capture QolRows;
+            }
+
+            [HarmonyPrefix]
+            [HarmonyBefore(QolRecipeRows.BulkOwner, QolRecipeRows.FilterOwner)]
+            private static void CaptureQolRows(out RefreshState __state)
+            {
+                __state = new RefreshState { QolRows = QolRecipeRows.BeginCapture() };
+            }
+
+            [HarmonyPrefix]
+            [HarmonyAfter(QolRecipeRows.BulkOwner, QolRecipeRows.FilterOwner)]
+            private static void CaptureVanillaOrder(
                 PlayerCamera __instance,
                 Item ___recipeItemFilter,
                 Recipes.RecipeCategory? ___selectedRecipeCategory,
-                out List<Recipe> __state)
+                bool __runOriginal,
+                RefreshState __state)
             {
+                if (!__runOriginal || __state == null)
+                {
+                    return;
+                }
+
                 try
                 {
-                    __state = RecipeListOrdering.Build(
-                        __instance,
-                        ___recipeItemFilter,
-                        ___selectedRecipeCategory);
+                    __state.VanillaOrder = RecipeListOrdering.Build(
+                        __instance, ___recipeItemFilter, ___selectedRecipeCategory);
                 }
                 catch (Exception exception)
                 {
-                    __state = null;
-                    EmiPlugin.Log?.LogError(
-                        $"[EMI] PlayerCamera.RefreshRecipeList prefix mapping failed; " +
-                        $"the original list will continue without EMI ordering:\n{exception}");
+                    EmiPlugin.Log?.LogError($"[EMI] PlayerCamera.RefreshRecipeList prefix mapping failed:\n{exception}");
                 }
             }
 
             private static void Postfix(
                 PlayerCamera __instance,
-                List<Recipe> __state,
-                List<GameObject> ___recipeObjects)
+                RefreshState __state,
+                List<GameObject> ___recipeObjects,
+                bool __runOriginal)
             {
                 try
                 {
                     CraftingTreeHud.Active?.HandleRecipeListRefreshed(
-                        __instance,
-                        __state,
-                        ___recipeObjects);
+                        __instance, ___recipeObjects,
+                        __runOriginal ? __state?.VanillaOrder : null,
+                        __runOriginal ? null : __state?.QolRows?.Recipes);
                 }
                 catch (Exception exception)
                 {
                     EmiPlugin.Log?.LogError($"[EMI] PlayerCamera.RefreshRecipeList postfix failed:\n{exception}");
                 }
+            }
+
+            private static void Finalizer(RefreshState __state)
+            {
+                __state?.QolRows?.Dispose();
             }
         }
     }

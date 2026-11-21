@@ -22,10 +22,8 @@ namespace EMI
         {
             public Recipe Recipe;
             public RectTransform RectTransform;
-            public Image Background;
             public Image Overlay;
             public Image Accent;
-            public Color OriginalBackground;
             public int OriginalOrder;
         }
 
@@ -38,6 +36,7 @@ namespace EMI
             new Color(0.36f, 0.68f, 0.88f, 1f);
 
         private readonly List<RowBinding> _rows = new List<RowBinding>();
+        private bool _reorderRows;
         private readonly HashSet<int> _readyTreeRecipes = new HashSet<int>();
         private readonly HashSet<int> _readyLeafRecipes = new HashSet<int>();
 
@@ -47,74 +46,84 @@ namespace EMI
         private readonly Dictionary<Recipe, bool> _availability =
             new Dictionary<Recipe, bool>();
 
-        /// <summary>
-        /// 将配方绑定到 PlayerCamera.RefreshRecipeList 创建的界面行。
-        /// 两个列表必须保持相同的顺序；该顺序由 RecipeListOrdering 负责复现。
-        /// </summary>
-        public void Bind(IReadOnlyList<Recipe> recipes, IReadOnlyList<GameObject> rows)
+        /// <summary>原版按顺序绑定，QoL 按实际写入每行的配方绑定。</summary>
+        public void Bind(
+            IReadOnlyList<GameObject> rows,
+            IReadOnlyList<Recipe> vanillaOrder,
+            IReadOnlyDictionary<GameObject, Recipe> capturedRows)
         {
+            foreach (RowBinding binding in _rows)
+            {
+                if (binding.Overlay != null) binding.Overlay.color = Color.clear;
+                if (binding.Accent != null) binding.Accent.color = Color.clear;
+            }
             _rows.Clear();
-            if (recipes == null || rows == null)
+            _reorderRows = vanillaOrder != null;
+            if (rows == null || (vanillaOrder == null && capturedRows == null))
             {
                 return;
             }
 
-            int count = Math.Min(recipes.Count, rows.Count);
-            if (recipes.Count != rows.Count)
+            if (vanillaOrder != null && vanillaOrder.Count != rows.Count)
             {
                 EmiPlugin.Log?.LogWarning(
-                    $"[EMI] Recipe row binding count mismatch. Recipes={recipes.Count}, Rows={rows.Count}");
+                    $"[EMI] Recipe row binding count mismatch. Recipes={vanillaOrder.Count}, Rows={rows.Count}");
+                return;
             }
 
-            for (int index = 0; index < count; index++)
+            for (int index = 0; index < rows.Count; index++)
             {
                 GameObject row = rows[index];
-                if (row == null)
+                if (row == null || !(row.transform is RectTransform rectTransform))
                 {
                     continue;
                 }
 
-                Image background = row.GetComponent<Image>();
-                RectTransform rectTransform = row.GetComponent<RectTransform>();
-                if (background == null || rectTransform == null)
+                Recipe recipe;
+                if (vanillaOrder != null)
+                {
+                    recipe = vanillaOrder[index];
+                }
+                else if (!capturedRows.TryGetValue(row, out recipe))
                 {
                     continue;
                 }
 
-                // 装饰层不接收射线，点击仍由原版 Button 处理，避免遮挡原版交互。
-                Image accent = UiFactory.CreatePanel(
-                    "EMIReadyAccent",
-                    row.transform,
-                    Color.clear);
-                accent.raycastTarget = false;
-                UiFactory.Anchor(
-                    accent.rectTransform,
-                    new Vector2(0f, 0.5f),
-                    new Vector2(0f, 0.5f),
-                    new Vector2(4f, 0f),
-                    new Vector2(7f, 54f));
+                // 配方名称、智力和图标的索引保持不变。QoL 重用行时也重用同一套装饰。
+                Image overlay = FindDecoration(row, "EMIReadyOverlay");
+                if (overlay == null)
+                {
+                    overlay = UiFactory.CreatePanel("EMIReadyOverlay", row.transform, Color.clear);
+                    overlay.raycastTarget = false;
+                    UiFactory.Stretch(overlay.rectTransform);
+                }
 
-                Image overlay = UiFactory.CreatePanel(
-                    "EMIReadyOverlay",
-                    row.transform,
-                    Color.clear);
-                overlay.raycastTarget = false;
-                UiFactory.Stretch(overlay.rectTransform);
-                overlay.transform.SetAsFirstSibling();
+                Image accent = FindDecoration(row, "EMIReadyAccent");
+                if (accent == null)
+                {
+                    accent = UiFactory.CreatePanel("EMIReadyAccent", row.transform, Color.clear);
+                    accent.raycastTarget = false;
+                    UiFactory.Anchor(accent.rectTransform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f),
+                        new Vector2(4f, 0f), new Vector2(7f, 54f));
+                }
 
                 _rows.Add(new RowBinding
                 {
-                    Recipe = recipes[index],
+                    Recipe = recipe,
                     RectTransform = rectTransform,
-                    Background = background,
                     Overlay = overlay,
                     Accent = accent,
-                    OriginalBackground = background.color,
                     OriginalOrder = index
                 });
             }
 
             Apply();
+        }
+
+        private static Image FindDecoration(GameObject row, string name)
+        {
+            Transform child = row.transform.Find(name);
+            return child != null ? child.GetComponent<Image>() : null;
         }
 
         /// <summary>
@@ -193,19 +202,21 @@ namespace EMI
 
         private void Apply()
         {
-            _rows.Sort((left, right) =>
+            if (_reorderRows)
             {
-                int priority = GetPriority(left.Recipe).CompareTo(GetPriority(right.Recipe));
-                return priority != 0
-                    ? priority
-                    : left.OriginalOrder.CompareTo(right.OriginalOrder);
-            });
+                _rows.Sort((left, right) =>
+                {
+                    int priority = GetPriority(left.Recipe).CompareTo(GetPriority(right.Recipe));
+                    return priority != 0
+                        ? priority
+                        : left.OriginalOrder.CompareTo(right.OriginalOrder);
+                });
+            }
 
             for (int index = 0; index < _rows.Count; index++)
             {
                 RowBinding binding = _rows[index];
-                if (binding.RectTransform == null || binding.Background == null ||
-                    binding.Overlay == null || binding.Accent == null)
+                if (binding.RectTransform == null || binding.Overlay == null || binding.Accent == null)
                 {
                     continue;
                 }
@@ -216,11 +227,12 @@ namespace EMI
                     ? RequiredStepColor
                     : LeafProducerColor;
 
-                // 原版通过坐标而非布局组件排列配方行，因此 EMI 排序时也必须更新 Y 坐标。
-                Vector2 position = binding.RectTransform.anchoredPosition;
-                position.y = -index * RecipeRowHeight;
-                binding.RectTransform.anchoredPosition = position;
-                binding.Background.color = binding.OriginalBackground;
+                if (_reorderRows)
+                {
+                    Vector2 position = binding.RectTransform.anchoredPosition;
+                    position.y = -index * RecipeRowHeight;
+                    binding.RectTransform.anchoredPosition = position;
+                }
                 binding.Overlay.color = highlighted
                     ? new Color(highlight.r, highlight.g, highlight.b, 0.34f)
                     : Color.clear;

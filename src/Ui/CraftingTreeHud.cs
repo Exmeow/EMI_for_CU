@@ -215,15 +215,16 @@ namespace EMI
 
         public void HandleRecipeListRefreshed(
             PlayerCamera player,
-            IReadOnlyList<Recipe> recipes,
-            IReadOnlyList<GameObject> rows)
+            IReadOnlyList<GameObject> rows,
+            IReadOnlyList<Recipe> vanillaOrder,
+            IReadOnlyDictionary<GameObject, Recipe> capturedRows)
         {
-            if (player == null || player != _player || recipes == null || rows == null)
+            if (player == null || player != _player)
             {
                 return;
             }
 
-            _recipeHighlighter.Bind(recipes, rows);
+            _recipeHighlighter.Bind(rows, vanillaOrder, capturedRows);
         }
 
         private void CreateInterface()
